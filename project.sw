@@ -11,11 +11,12 @@ Current implementation status:
 - Database setup added in app/db.py
 - SQLAlchemy models added in app/models.py
 - Demo account is now persisted in PostgreSQL
-- CoinEx public market-data client added in app/coinex.py
+- CoinEx public market-data client and live WebSocket stream added in app/coinex.py
 - Live dashboard added in app/static/index.html
+- Dashboard now renders live 1-minute candles from /ws/market/{market}
 - Dockerfile, docker-compose.yml, requirements.txt, .env.example and .gitignore added
 - docker-compose includes api, postgres and redis services
-- README includes local and server startup commands
+- README includes local/server startup and live chart notes
 
 Default mode: demo mode. Demo mode uses a virtual demo account and simulated orders. Live trading can be enabled only explicitly with environment variables and API credentials.
 
@@ -41,13 +42,15 @@ CoinEx market-data implementation:
   - GET /api/v1/market/kline
   - GET /api/v1/market/ticker
   - WS /ws/market/{market}
-- Current WebSocket MVP polls ticker every 3 seconds through backend
-- Next: replace polling with direct CoinEx WS subscription
+- WebSocket endpoint now uses CoinEx deals.subscribe live stream
+- If CoinEx WebSocket fails, backend falls back to HTTP ticker polling
 
 Live charts implementation:
 - Dashboard is served at /
 - Uses TradingView Lightweight Charts from CDN
-- Shows candlestick history, latest ticker JSON, demo balance and equity
+- Historical candles load from CoinEx HTTP kline
+- Current 1-minute candle updates from backend live_price events
+- Dashboard shows live price, source, latest stream event, demo balance and equity
 - Next: add trade markers, signal markers and equity curve
 
 Exchange integration plan:
@@ -89,7 +92,7 @@ Development rules:
 Next steps:
 1. Add tests and CI
 2. Add proper demo position accounting
-3. Add direct CoinEx WebSocket market stream
+3. Verify CoinEx WS payload in production logs and adjust parser if needed
 4. Add trade markers on dashboard
 5. Add first RSS/news collector
 6. Add risk config and emergency stop
