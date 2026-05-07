@@ -85,6 +85,18 @@ class NewsSignal(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
+class BotLog(Base):
+    __tablename__ = 'bot_logs'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    level: Mapped[str] = mapped_column(String(16), nullable=False, default='info')
+    event: Mapped[str] = mapped_column(String(64), nullable=False, default='message')
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    market: Mapped[str] = mapped_column(String(32), nullable=False, default='')
+    action: Mapped[str] = mapped_column(String(16), nullable=False, default='')
+    score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+
+
 class ChartHistoryPoint(Base):
     __tablename__ = 'chart_history'
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
