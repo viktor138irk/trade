@@ -29,7 +29,12 @@
     .good { border-color: #166534; color: #bbf7d0; }
     .bad { border-color: #7f1d1d; color: #fecaca; }
     .wide { width: 100%; }
-    pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #c2cef7; max-height: 220px; overflow: auto; background:#0b1228; padding: 12px; border-radius: 12px; border: 1px solid #202e56; }
+    .box { background:#0b1228; padding: 12px; border-radius: 12px; border: 1px solid #202e56; margin: 8px 0 14px; }
+    .line { display:flex; justify-content:space-between; gap:12px; padding: 7px 0; border-bottom:1px solid rgba(145,162,214,.12); }
+    .line:last-child { border-bottom:0; }
+    .line b { color:#fff; }
+    .text { color:#c2cef7; font-size: 13px; line-height: 1.45; }
+    pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #c2cef7; max-height: 160px; overflow: auto; background:#0b1228; padding: 12px; border-radius: 12px; border: 1px solid #202e56; }
     .headline { font-size: 15px; font-weight: 800; margin-bottom: 8px; }
     .muted { color: var(--muted); font-size: 13px; }
     @media (max-width: 1080px) { main { grid-template-columns: 1fr; } .cards { grid-template-columns: 1fr; } }
@@ -78,13 +83,15 @@
         <button onclick="analyze()">Анализ текущей пары</button>
         <button onclick="decide()">Решение AI</button>
       </div>
-      <pre id="aiResult">AI-результат появится здесь.</pre>
+      <div id="aiResult" class="box text">AI-результат появится здесь.</div>
 
       <div class="headline">Настройки</div>
-      <pre id="botSettings">—</pre>
+      <div id="botSettings" class="box text">—</div>
 
-      <div class="headline">Последнее событие</div>
-      <pre id="ticker">—</pre>
+      <details>
+        <summary class="muted">Техническое событие</summary>
+        <pre id="ticker">—</pre>
+      </details>
     </aside>
   </main>
 
@@ -103,7 +110,42 @@ let currentCandle = null;
 let appState = null;
 
 function getMarket() { return document.getElementById('marketSelect').value || 'BTCUSDT'; }
-function setJson(id, obj) { document.getElementById(id).textContent = JSON.stringify(obj, null, 2); }
+function actionRu(action) { return { buy: 'Покупать', sell: 'Продавать', hold: 'Ждать' }[action] || action || '—'; }
+function boolRu(value) { return value ? 'включен' : 'выключен'; }
+function htmlEscape(s) { return String(s ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
+
+function renderDecision(obj) {
+  const d = obj.decision || obj;
+  const indicators = d.indicators || obj.indicators || {};
+  const executed = obj.executed === true ? 'Да' : obj.executed === false ? 'Нет' : '—';
+  const mode = obj.mode ? obj.mode.toUpperCase() : '—';
+  const reason = d.reason || obj.reason || 'Нет причины.';
+  document.getElementById('aiResult').innerHTML = `
+    <div class="line"><span>Пара</span><b>${htmlEscape(d.market || obj.market || '—')}</b></div>
+    <div class="line"><span>Действие</span><b>${htmlEscape(actionRu(d.action || obj.action))}</b></div>
+    <div class="line"><span>Оценка AI</span><b>${Number(d.score ?? obj.score ?? 0).toFixed(1)} / 100</b></div>
+    <div class="line"><span>Уверенность</span><b>${Number(d.confidence ?? obj.confidence ?? 0).toFixed(1)}%</b></div>
+    <div class="line"><span>Цена</span><b>${Number(indicators.last_price ?? obj.last_price ?? 0).toLocaleString('ru-RU')}</b></div>
+    <div class="line"><span>Режим</span><b>${htmlEscape(mode)}</b></div>
+    <div class="line"><span>Сделка выполнена</span><b>${executed}</b></div>
+    <div style="padding-top:10px"><span class="muted">Причина:</span><br>${htmlEscape(reason)}</div>
+  `;
+}
+
+function renderSettings(settings) {
+  if (!settings) return;
+  const mode = settings.trade_mode || 'demo';
+  document.getElementById('modeLabel').textContent = mode.toUpperCase();
+  document.getElementById('modeLabel').style.color = mode === 'live' ? 'var(--bad)' : 'var(--good)';
+  document.getElementById('botSettings').innerHTML = `
+    <div class="line"><span>Бот</span><b>${boolRu(settings.enabled)}</b></div>
+    <div class="line"><span>Счет</span><b>${mode === 'live' ? 'Live' : 'Demo'}</b></div>
+    <div class="line"><span>Стратегия</span><b>${htmlEscape(settings.trade_style_mode || 'balanced')}</b></div>
+    <div class="line"><span>Сумма сделки</span><b>${Number(settings.max_quote_per_trade || 0).toFixed(2)} USDT</b></div>
+    <div class="line"><span>Мин. оценка AI</span><b>${Number(settings.min_signal_score || 0).toFixed(0)} / 100</b></div>
+    <div class="line"><span>Макс. позиций</span><b>${settings.max_open_positions ?? '—'}</b></div>
+  `;
+}
 
 async function bootstrap() {
   const res = await fetch('/api/v1/app/bootstrap');
@@ -163,27 +205,22 @@ async function autoPickMarket() {
   const json = await res.json();
   if (json.market) {
     document.getElementById('marketSelect').value = json.market;
-    setJson('aiResult', json);
+    renderDecision(json);
     await loadSelectedMarket();
-  } else setJson('aiResult', json);
+  } else renderDecision(json);
 }
 
 function renderAccount(acc) {
   if (!acc) return;
   document.getElementById('balance').textContent = `${Number(acc.balance).toFixed(2)} ${acc.quote_asset}`;
 }
-function renderSettings(settings) {
-  if (!settings) return;
-  document.getElementById('modeLabel').textContent = (settings.trade_mode || 'demo').toUpperCase();
-  setJson('botSettings', settings);
-}
 async function loadAccount() { const res = await fetch('/api/v1/demo/account'); renderAccount(await res.json()); }
 async function loadBotSettings() { const res = await fetch('/api/v1/bot/settings'); renderSettings(await res.json()); }
-async function analyze() { const res = await fetch(`/api/v1/bot/analyze?market=${getMarket()}`); setJson('aiResult', await res.json()); }
-async function decide() { const res = await fetch(`/api/v1/bot/decide?market=${getMarket()}`, { method: 'POST' }); setJson('aiResult', await res.json()); }
+async function analyze() { const res = await fetch(`/api/v1/bot/analyze?market=${getMarket()}`); renderDecision(await res.json()); }
+async function decide() { const res = await fetch(`/api/v1/bot/decide?market=${getMarket()}`, { method: 'POST' }); renderDecision(await res.json()); }
 async function autoTrade() {
   const res = await fetch(`/api/v1/bot/auto-trade?market=${getMarket()}`, { method: 'POST' });
-  setJson('aiResult', await res.json());
+  renderDecision(await res.json());
   await loadAccount();
   await loadMarkers(getMarket());
 }
