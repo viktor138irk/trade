@@ -19,7 +19,9 @@ class Settings(BaseSettings):
     redis_url: str = 'redis://localhost:6379/0'
     coinex_access_id: str = ''
     coinex_secret_key: str = ''
-    live_requires_ack_text: str = 'I_UNDERSTAND_LIVE_TRADING_RISK'
+    admin_username: str = 'admin'
+    admin_password: str = 'admin'
+    auth_enabled: bool = True
 
     @property
     def live_enabled(self) -> bool:
