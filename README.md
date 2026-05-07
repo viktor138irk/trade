@@ -1,11 +1,11 @@
 # Trade Autopilot
 
-Сервис для анализа открытых новостей и рыночных данных с демо-счетом, CoinEx market data и live-графиками.
+Сервис для анализа открытых новостей и рыночных данных с демо-счетом, CoinEx market data, AI-ботом и live-графиками.
 
 ## Режимы
 
 - `demo` — режим по умолчанию. Виртуальный баланс, виртуальные сделки, история и PnL.
-- `live` — защищенный режим для будущего подключения биржевого исполнения. По умолчанию выключен.
+- `live` — защищенный режим для подключения биржевого исполнения. По умолчанию выключен и требует явного подтверждения риска.
 
 ## Быстрый старт
 
@@ -35,9 +35,45 @@ Live-график:
 - Backend подключается к CoinEx spot WebSocket и подписывается на сделки.
 - Если WebSocket CoinEx недоступен, включается HTTP fallback.
 
-## Сервер
+## AI-бот
 
-Основной сервер проекта: `194.67.116.46`
+Endpoints:
+
+```bash
+curl http://localhost:8000/api/v1/bot/settings
+curl "http://localhost:8000/api/v1/bot/analyze?market=BTCUSDT"
+curl -X POST "http://localhost:8000/api/v1/bot/decide?market=BTCUSDT"
+curl -X POST "http://localhost:8000/api/v1/bot/auto-demo-trade?market=BTCUSDT"
+```
+
+Manual signal:
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/signals/manual?title=BTC bullish news&market=BTCUSDT&sentiment=positive&score=80"
+```
+
+## Live mode guard
+
+Live mode requires all of these:
+
+```env
+TRADE_MODE=live
+ENABLE_LIVE_TRADING=true
+COINEX_ACCESS_ID=...
+COINEX_SECRET_KEY=...
+```
+
+Then enable through API with acknowledgement:
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/bot/live/enable?ack=I_UNDERSTAND_LIVE_TRADING_RISK"
+```
+
+Disable live mode:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/bot/live/disable
+```
 
 ## Установка Git на сервер
 
@@ -84,6 +120,7 @@ docker compose up -d --build
 
 ```text
 app/
+  ai_bot.py      monolithic AI bot logic
   coinex.py      CoinEx HTTP client and live WebSocket stream
   core.py        settings
   db.py          database setup
@@ -95,4 +132,4 @@ app/
 
 ## Важно
 
-Проект стартует с демо-счета. Реальное исполнение должно проходить через отдельный защищенный адаптер, риск-лимиты и аварийную остановку.
+Проект стартует с демо-счета. Реальное исполнение должно проходить через защищенный live guard, риск-лимиты и аварийную остановку.
