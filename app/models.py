@@ -57,6 +57,7 @@ class BotState(Base):
     max_quote_per_trade: Mapped[float] = mapped_column(Float, nullable=False, default=100.0)
     emergency_stop: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     live_acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    last_market: Mapped[str] = mapped_column(String(32), nullable=False, default='')
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
 
@@ -95,6 +96,23 @@ class BotLog(Base):
     action: Mapped[str] = mapped_column(String(16), nullable=False, default='')
     score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+
+
+class MarketRule(Base):
+    __tablename__ = 'market_rules'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    market: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True)
+    base_asset: Mapped[str] = mapped_column(String(16), nullable=False, default='')
+    quote_asset: Mapped[str] = mapped_column(String(16), nullable=False, default='USDT')
+    min_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    min_quote_amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    amount_precision: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
+    price_precision: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
+    maker_fee_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.002)
+    taker_fee_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.002)
+    is_trading_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    raw_json: Mapped[str] = mapped_column(Text, nullable=False, default='{}')
+    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
 class ChartHistoryPoint(Base):
