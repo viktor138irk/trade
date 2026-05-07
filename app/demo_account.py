@@ -23,6 +23,9 @@ class DemoAccount(BaseModel):
     balance: float
     equity: float
     realized_pnl: float = 0.0
+    unrealized_pnl: float = 0.0
+    total_pnl: float = 0.0
+    open_positions_value: float = 0.0
     trades: list[DemoTrade] = Field(default_factory=list)
 
 
@@ -43,11 +46,19 @@ class DemoAccountService:
     def snapshot(self, db: Session) -> DemoAccount:
         state = self._get_or_create_state(db)
         trades = db.query(DemoTradeRecord).order_by(DemoTradeRecord.id.desc()).limit(100).all()
+        open_value = self.open_positions_value(db)
+        unrealized = self.open_positions_unrealized_pnl(db)
+        state.equity = state.balance + open_value
+        db.add(state)
+        db.commit()
         return DemoAccount(
             quote_asset=state.quote_asset,
             balance=state.balance,
             equity=state.equity,
             realized_pnl=state.realized_pnl,
+            unrealized_pnl=unrealized,
+            total_pnl=state.realized_pnl + unrealized,
+            open_positions_value=open_value,
             trades=[DemoTrade.model_validate(trade) for trade in reversed(trades)],
         )
 
@@ -135,8 +146,6 @@ class DemoAccountService:
         position = self.get_open_position(db, market)
         if position is None or position.amount <= 0:
             raise ValueError(f'нет открытой позиции по {market} для полного закрытия')
-        # In demo mode the database position is the balance source of truth.
-        # In live mode the execution adapter must replace this with exchange balance verification.
         verified_amount = position.amount
         return self.add_demo_trade(db, market, 'sell', price, verified_amount, f'{reason}; закрытие всей доступной суммы {verified_amount:g}')
 
@@ -156,7 +165,14 @@ class DemoAccountService:
             base = position.avg_entry_price * position.amount
             position.unrealized_pnl_pct = (position.unrealized_pnl / base * 100) if base else 0.0
             db.add(position)
+        state = self._get_or_create_state(db)
+        state.equity = state.balance + self.open_positions_value(db)
+        db.add(state)
 
     def open_positions_value(self, db: Session) -> float:
         positions = db.query(DemoPosition).filter(DemoPosition.is_open.is_(True)).all()
         return sum(position.current_price * position.amount for position in positions)
+
+    def open_positions_unrealized_pnl(self, db: Session) -> float:
+        positions = db.query(DemoPosition).filter(DemoPosition.is_open.is_(True)).all()
+        return sum(position.unrealized_pnl for position in positions)
