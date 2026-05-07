@@ -113,19 +113,36 @@ class AiTradingBot:
             reason=reason,
         )
 
-    async def choose_best_market(self, db: Session) -> IndicatorPack:
+    def rotated_markets(self, db: Session) -> list[str]:
+        state = self.get_or_create_state(db)
+        markets = list(self.markets)
+        if not markets or not state.last_market or state.last_market not in markets:
+            return markets
+        index = markets.index(state.last_market)
+        return markets[index + 1:] + markets[:index + 1]
+
+    async def choose_best_market(self, db: Session, skip_open_positions: bool = True) -> IndicatorPack:
         packs: list[IndicatorPack] = []
-        for market in self.markets:
+        for market in self.rotated_markets(db):
+            if skip_open_positions:
+                open_position = db.query(DemoPosition).filter(DemoPosition.market == market, DemoPosition.is_open.is_(True)).first()
+                if open_position is not None:
+                    continue
             try:
                 packs.append(await self.analyze_market(db, market))
             except Exception:
                 continue
         if not packs:
             raise ValueError('no market could be analyzed')
-        return max(packs, key=lambda item: item.score)
+        chosen = max(packs, key=lambda item: item.score)
+        state = self.get_or_create_state(db)
+        state.last_market = chosen.market
+        db.add(state)
+        db.commit()
+        return chosen
 
-    async def make_decision(self, db: Session, market: str | None = None, persist: bool = True) -> AiDecision:
-        pack = await self.analyze_market(db, market) if market else await self.choose_best_market(db)
+    async def make_decision(self, db: Session, market: str | None = None, persist: bool = True, skip_open_positions: bool = True) -> AiDecision:
+        pack = await self.analyze_market(db, market) if market else await self.choose_best_market(db, skip_open_positions=skip_open_positions)
         decision = AiDecision(
             market=pack.market,
             action=pack.action,
@@ -194,6 +211,7 @@ class AiTradingBot:
             'max_open_positions': state.max_open_positions,
             'max_quote_per_trade': state.max_quote_per_trade,
             'emergency_stop': state.emergency_stop,
+            'last_market': state.last_market,
         }
 
     def _parse_candles(self, raw: dict[str, Any]) -> list[dict[str, float]]:
