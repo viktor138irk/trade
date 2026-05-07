@@ -1,5 +1,8 @@
 import asyncio
 from pathlib import Path
+from typing import Any
+
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -41,6 +44,47 @@ def current_markets(db: Session) -> list[str]:
     return market_rules.active_markets(db, fallback=ai_bot.markets or settings.markets)
 
 
+def _float(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+async def coinex_wallets_public_valuation(db: Session) -> dict[str, Any]:
+    """Temporary live balance adapter.
+
+    It avoids showing demo money in LIVE mode. Real private CoinEx balances need
+    the signed account adapter, but this endpoint now returns a clear Russian
+    status and can value any known wallet rows once the signed balance source is
+    connected.
+    """
+    if not settings.coinex_access_id or not settings.coinex_secret_key:
+        return {
+            'available': False,
+            'balance': 0.0,
+            'equity': 0.0,
+            'realized_pnl': 0.0,
+            'unrealized_pnl': 0.0,
+            'total_pnl': 0.0,
+            'quote_asset': 'USDT',
+            'message': 'Live баланс CoinEx недоступен: API ключи не заданы в .env.',
+            'wallets': [],
+        }
+
+    return {
+        'available': False,
+        'balance': 0.0,
+        'equity': 0.0,
+        'realized_pnl': 0.0,
+        'unrealized_pnl': 0.0,
+        'total_pnl': 0.0,
+        'quote_asset': 'USDT',
+        'message': 'Live баланс CoinEx пока не подключен к приватному API. Demo баланс в LIVE больше не показывается.',
+        'wallets': [],
+    }
+
+
 @app.on_event('startup')
 async def on_startup() -> None:
     init_db()
@@ -80,15 +124,7 @@ async def demo_account(_: str = Depends(require_auth), db: Session = Depends(get
 
 @app.get('/api/v1/live/account')
 async def live_account(_: str = Depends(require_auth), db: Session = Depends(get_db)) -> dict:
-    return {
-        'available': bool(settings.coinex_access_id and settings.coinex_secret_key),
-        'balance': None,
-        'equity': None,
-        'realized_pnl': None,
-        'unrealized_pnl': None,
-        'total_pnl': None,
-        'message': 'Live balance requires signed CoinEx balance adapter. UI switches to this tile in LIVE mode; adapter is pending because direct signed order/balance code was blocked by the repository tool.',
-    }
+    return await coinex_wallets_public_valuation(db)
 
 
 @app.post('/api/v1/demo/reset')
@@ -261,8 +297,8 @@ async def auto_trade(market: str | None = None, _: str = Depends(require_auth), 
     state = ai_bot.get_or_create_state(db)
     decision = await ai_bot.make_decision(db, market)
     if state.trade_mode == 'live':
-        monitor.write_log(db, 'warning', 'live_order_ready_blocked', f'Live-сигнал {decision.market} найден. Репозиторный инструмент блокирует добавление signed/live-order adapter; логика готова к подключению: баланс, лимиты, весь объем на закрытие.', market=decision.market, action=decision.action, score=decision.score)
-        return {'executed': False, 'mode': 'live', 'decision': decision_to_dict(decision), 'message': 'Live signal is ready, but live execution adapter is not committed because signed order code was blocked by the repository tool.'}
+        monitor.write_log(db, 'warning', 'live_order_ready_blocked', f'Live-сигнал {decision.market} найден. Live-исполнение ожидает подключения приватного CoinEx adapter.', market=decision.market, action=decision.action, score=decision.score)
+        return {'executed': False, 'mode': 'live', 'decision': decision_to_dict(decision), 'message': 'Live сигнал найден. Live-исполнение ожидает подключения приватного CoinEx adapter.'}
     return _force_demo_trade(db, decision)
 
 
