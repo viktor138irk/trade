@@ -8,9 +8,13 @@ Project goal: build a fast event-driven market research and trading assistant ba
 Current implementation status:
 - FastAPI backend added in app/main.py
 - Demo account service added in app/demo_account.py
+- Database setup added in app/db.py
+- SQLAlchemy models added in app/models.py
+- Demo account is now persisted in PostgreSQL
 - CoinEx public market-data client added in app/coinex.py
 - Live dashboard added in app/static/index.html
-- Dockerfile, docker-compose.yml, requirements.txt and .env.example added
+- Dockerfile, docker-compose.yml, requirements.txt, .env.example and .gitignore added
+- docker-compose includes api, postgres and redis services
 - README includes local and server startup commands
 
 Default mode: demo mode. Demo mode uses a virtual demo account and simulated orders. Live trading can be enabled only explicitly with environment variables and API credentials.
@@ -21,12 +25,14 @@ Mode names:
 
 Demo account implementation:
 - Initial virtual balance configurable by DEMO_INITIAL_BALANCE, default 10000 USDT
-- Current in-memory MVP tracks balance, equity, realized_pnl and trades
+- PostgreSQL tables:
+  - demo_account_state
+  - demo_trades
 - Endpoints:
   - GET /api/v1/demo/account
   - POST /api/v1/demo/reset
   - POST /api/v1/demo/trades
-- Next: move demo ledger from memory to PostgreSQL
+- Current limitation: position accounting is basic and needs proper inventory/average-entry logic
 
 CoinEx market-data implementation:
 - HTTP base URL: https://api.coinex.com/v2
@@ -82,7 +88,7 @@ Development rules:
 
 Next steps:
 1. Add tests and CI
-2. Add PostgreSQL models for demo ledger
+2. Add proper demo position accounting
 3. Add direct CoinEx WebSocket market stream
 4. Add trade markers on dashboard
 5. Add first RSS/news collector
