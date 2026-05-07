@@ -5,31 +5,52 @@ Server IP: 194.67.116.46
 
 Project goal: build a fast event-driven market research and trading assistant based on public news and public signal sources.
 
+Current implementation status:
+- FastAPI backend added in app/main.py
+- Demo account service added in app/demo_account.py
+- CoinEx public market-data client added in app/coinex.py
+- Live dashboard added in app/static/index.html
+- Dockerfile, docker-compose.yml, requirements.txt and .env.example added
+- README includes local and server startup commands
+
 Default mode: demo mode. Demo mode uses a virtual demo account and simulated orders. Live trading can be enabled only explicitly with environment variables and API credentials.
 
 Mode names:
 - demo: virtual demo account, simulated balance, simulated orders, PnL, trade history, reset balance
-- live: real CoinEx execution, disabled by default and protected by explicit flags
+- live: future real exchange execution, disabled by default and protected by explicit flags
 
-Demo account plan:
+Demo account implementation:
 - Initial virtual balance configurable by DEMO_INITIAL_BALANCE, default 10000 USDT
-- Store demo balances, positions, orders, fills and PnL in PostgreSQL
-- Support reset demo account endpoint
-- Show demo equity curve and trade markers on live charts
-- Every demo trade must include a strategy reason and risk-check result
+- Current in-memory MVP tracks balance, equity, realized_pnl and trades
+- Endpoints:
+  - GET /api/v1/demo/account
+  - POST /api/v1/demo/reset
+  - POST /api/v1/demo/trades
+- Next: move demo ledger from memory to PostgreSQL
+
+CoinEx market-data implementation:
+- HTTP base URL: https://api.coinex.com/v2
+- Spot WebSocket base URL: wss://socket.coinex.com/v2/spot
+- Current endpoints:
+  - GET /api/v1/market/kline
+  - GET /api/v1/market/ticker
+  - WS /ws/market/{market}
+- Current WebSocket MVP polls ticker every 3 seconds through backend
+- Next: replace polling with direct CoinEx WS subscription
+
+Live charts implementation:
+- Dashboard is served at /
+- Uses TradingView Lightweight Charts from CDN
+- Shows candlestick history, latest ticker JSON, demo balance and equity
+- Next: add trade markers, signal markers and equity curve
 
 Exchange integration plan:
 - CoinEx adapter for market data, account status and guarded order placement
 - Live trading flag: TRADE_MODE=demo|live
-- CoinEx credentials must be stored only in environment variables: COINEX_ACCESS_ID and COINEX_SECRET_KEY
+- CoinEx credentials must be stored only in environment variables
 - Live mode must require ENABLE_LIVE_TRADING=true plus TRADE_MODE=live
 - Add risk checks before every live order
 - Add emergency stop flag to block all new live orders
-
-Live charts plan:
-- FastAPI backend exposes REST endpoints for historical candles, signals and trades
-- WebSocket endpoint streams live ticks/candles, detected news signals and execution events
-- Frontend dashboard shows candlestick chart, selected pair, signal markers, demo/live trades, demo account balance and risk status
 
 Planned MVP modules:
 - collector: RSS/news/public signal ingestion
@@ -60,11 +81,10 @@ Development rules:
 - Keep changes small and reviewable
 
 Next steps:
-1. Create project skeleton
-2. Add FastAPI health endpoint
-3. Add docker-compose with PostgreSQL and Redis
-4. Add CoinEx market-data client
-5. Add demo account ledger
-6. Add guarded CoinEx live execution adapter
-7. Add live chart dashboard
-8. Add risk config and emergency stop
+1. Add tests and CI
+2. Add PostgreSQL models for demo ledger
+3. Add direct CoinEx WebSocket market stream
+4. Add trade markers on dashboard
+5. Add first RSS/news collector
+6. Add risk config and emergency stop
+7. Add guarded CoinEx live execution adapter
