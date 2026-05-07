@@ -94,10 +94,10 @@ class AiTradingBot:
 
         confidence = max(0, min(100, abs(score - 50) * 1.8))
         reason = (
-            f'AI-bot: {market} score={score:.1f}. '
-            f'SMA fast {sma_fast:.8f} vs slow {sma_slow:.8f}; '
-            f'momentum {momentum_pct:.2f}%; volatility {volatility_pct:.2f}%; news_score {news_score:.1f}. '
-            f'Action: {action}.'
+            f'{market}: score {score:.1f}. '
+            f'Быстрая средняя {sma_fast:.8f}, медленная {sma_slow:.8f}; '
+            f'импульс {momentum_pct:.2f}%, волатильность {volatility_pct:.2f}%, новостной фон {news_score:.1f}. '
+            f'Действие: {action}.'
         )
         return IndicatorPack(
             market=market,
@@ -194,7 +194,6 @@ class AiTradingBot:
             'max_open_positions': state.max_open_positions,
             'max_quote_per_trade': state.max_quote_per_trade,
             'emergency_stop': state.emergency_stop,
-            'live_acknowledged': state.live_acknowledged,
         }
 
     def _parse_candles(self, raw: dict[str, Any]) -> list[dict[str, float]]:
