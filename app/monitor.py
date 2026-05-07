@@ -7,14 +7,16 @@ from sqlalchemy.orm import Session
 from app.ai_bot import AiTradingBot, decision_to_dict
 from app.demo_account import DemoAccountService
 from app.legacy_bot import LegacyBotService
+from app.market_rules import MarketRuleService
 from app.models import BotLog
 
 
 class SignalMonitor:
-    def __init__(self, ai_bot: AiTradingBot, demo_service: DemoAccountService, legacy_bot: LegacyBotService) -> None:
+    def __init__(self, ai_bot: AiTradingBot, demo_service: DemoAccountService, legacy_bot: LegacyBotService, market_rules: MarketRuleService) -> None:
         self.ai_bot = ai_bot
         self.demo_service = demo_service
         self.legacy_bot = legacy_bot
+        self.market_rules = market_rules
         self.running = False
         self.last_status = 'Остановлен'
         self.last_market = ''
@@ -22,6 +24,7 @@ class SignalMonitor:
         self.last_score = 0.0
         self.last_error = ''
         self.last_run_at: datetime | None = None
+        self.rules_synced = False
 
     def status(self) -> dict[str, Any]:
         return {
@@ -32,6 +35,7 @@ class SignalMonitor:
             'last_score': self.last_score,
             'last_error': self.last_error,
             'last_run_at': self.last_run_at.isoformat() if self.last_run_at else None,
+            'rules_synced': self.rules_synced,
         }
 
     async def loop(self, session_factory, interval_seconds: int = 10) -> None:
@@ -57,6 +61,14 @@ class SignalMonitor:
     async def tick(self, db: Session) -> dict[str, Any]:
         state = self.ai_bot.get_or_create_state(db)
         self.last_run_at = datetime.now(timezone.utc)
+        if not self.rules_synced:
+            try:
+                result = await self.market_rules.sync(db, self.ai_bot.markets)
+                self.rules_synced = True
+                self.write_log(db, 'success', 'coinex_rules_synced', f'Синхронизированы лимиты и комиссии CoinEx: {result["synced"]} рынков.')
+            except Exception as exc:  # noqa: BLE001
+                self.write_log(db, 'warning', 'coinex_rules_sync_failed', f'Не удалось синхронизировать лимиты CoinEx: {exc}')
+
         if not state.enabled:
             self.last_status = 'Бот выключен'
             self.write_log(db, 'warning', 'bot_disabled', 'Мониторинг проверил состояние: бот выключен, сделка не открывается.')
@@ -66,8 +78,8 @@ class SignalMonitor:
             self.write_log(db, 'warning', 'emergency_stop', 'Аварийная остановка активна. Новые сделки не открываются.')
             return self.status()
 
-        self.write_log(db, 'info', 'scan_started', 'Сканирую рынки и ищу лучшую сделку.')
-        decision = await self.ai_bot.make_decision(db, None)
+        self.write_log(db, 'info', 'scan_started', 'Сканирую рынки по ротации, пропускаю пары с уже открытой сделкой.')
+        decision = await self.ai_bot.make_decision(db, None, skip_open_positions=True)
         data = decision_to_dict(decision)
         self.last_market = decision.market
         self.last_action = decision.action
@@ -83,31 +95,41 @@ class SignalMonitor:
             score=decision.score,
         )
 
-        if state.trade_mode == 'demo' and decision.action in {'buy', 'sell'} and decision.score >= state.min_signal_score:
+        if state.trade_mode == 'demo' and decision.action == 'buy' and decision.score >= state.min_signal_score:
             price = float(data['indicators']['last_price'])
-            amount = max(1.0, state.max_quote_per_trade) / price
-            trade = self.demo_service.add_demo_trade(db, decision.market, decision.action, price, amount, decision.reason)
+            amount, rule_message = self.market_rules.ensure_amount(db, decision.market, max(1.0, state.max_quote_per_trade), price)
+            trade = self.demo_service.add_demo_trade(db, decision.market, 'buy', price, amount, f'{decision.reason}; {rule_message}')
             decision.executed = True
             db.add(decision)
             db.commit()
             self.legacy_bot.snapshot_history(db)
-            self.last_status = f'Открыта демо-сделка {trade.side.upper()} {trade.market}'
+            self.last_status = f'Открыта демо-сделка BUY {trade.market}'
             self.write_log(
                 db,
                 'success',
                 'demo_order_opened',
-                f'Открыта демо-сделка: {trade.side.upper()} {trade.market}, сумма {trade.quote_amount:.2f} USDT, цена {trade.price:.8f}.',
+                f'Открыта демо-сделка: BUY {trade.market}, сумма {trade.quote_amount:.2f} USDT, цена {trade.price:.8f}. {rule_message}',
                 market=trade.market,
                 action=trade.side,
                 score=decision.score,
             )
+        elif state.trade_mode == 'demo' and decision.action == 'sell' and decision.score >= state.min_signal_score:
+            price = float(data['indicators']['last_price'])
+            if self.demo_service.has_open_position(db, decision.market):
+                trade = self.demo_service.close_full_market(db, decision.market, price, decision.reason)
+                self.legacy_bot.snapshot_history(db)
+                self.last_status = f'Закрыта вся позиция SELL {trade.market}'
+                self.write_log(db, 'success', 'demo_order_closed', f'Закрыта вся доступная позиция: SELL {trade.market}, объем {trade.amount:g}, цена {trade.price:.8f}.', market=trade.market, action='sell', score=decision.score)
+            else:
+                self.last_status = 'SELL сигнал без открытой позиции'
+                self.write_log(db, 'info', 'sell_without_position', f'SELL сигнал по {decision.market}, но открытой позиции нет — пропускаю.', market=decision.market, action='sell', score=decision.score)
         elif state.trade_mode == 'live' and decision.action in {'buy', 'sell'} and decision.score >= state.min_signal_score:
             self.last_status = 'Найден live-сигнал, ожидает live adapter'
             self.write_log(
                 db,
                 'warning',
                 'live_signal_waiting',
-                f'Live-сигнал найден: {decision.market}, {action_ru}, оценка {decision.score:.1f}. Live-адаптер ордеров еще не подключен.',
+                f'Live-сигнал найден: {decision.market}, {action_ru}, оценка {decision.score:.1f}. Перед live-ордером нужно сверить доступный баланс/позицию через API CoinEx.',
                 market=decision.market,
                 action=decision.action,
                 score=decision.score,
