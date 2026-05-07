@@ -29,11 +29,20 @@ static_dir = Path(__file__).parent / 'static'
 app.mount('/static', StaticFiles(directory=static_dir), name='static')
 
 
+def ensure_monitor_running() -> None:
+    global monitor_task
+    if monitor_task is None or monitor_task.done():
+        monitor_task = asyncio.create_task(monitor.loop(SessionLocal, interval_seconds=10))
+
+
 @app.on_event('startup')
-def on_startup() -> None:
+async def on_startup() -> None:
     init_db()
     with SessionLocal() as db:
         legacy_bot.ensure_defaults(db)
+        state = ai_bot.get_or_create_state(db)
+        if state.enabled:
+            ensure_monitor_running()
 
 
 @app.get('/')
@@ -97,6 +106,8 @@ async def update_bot_settings(enabled: bool | None = None, trade_mode: str | Non
     if trade_mode is not None and trade_mode not in {'demo', 'live'}:
         raise HTTPException(status_code=400, detail='trade_mode must be demo or live')
     state = ai_bot.update_state(db, enabled=enabled, trade_mode=trade_mode, trade_style_mode=trade_style_mode, min_signal_score=min_signal_score, max_open_positions=max_open_positions, max_quote_per_trade=max_quote_per_trade, emergency_stop=emergency_stop)
+    if state.enabled:
+        ensure_monitor_running()
     return ai_bot.state_to_dict(state)
 
 
@@ -105,12 +116,15 @@ async def monitor_status(_: str = Depends(require_auth)) -> dict:
     return monitor.status()
 
 
+@app.get('/api/v1/monitor/logs')
+async def monitor_logs(limit: int = 80, _: str = Depends(require_auth), db: Session = Depends(get_db)) -> dict:
+    return {'items': monitor.recent_logs(db, limit)}
+
+
 @app.post('/api/v1/monitor/start')
 async def monitor_start(_: str = Depends(require_auth), db: Session = Depends(get_db)) -> dict:
-    global monitor_task
     state = ai_bot.update_state(db, enabled=True)
-    if monitor_task is None or monitor_task.done():
-        monitor_task = asyncio.create_task(monitor.loop(SessionLocal, interval_seconds=20))
+    ensure_monitor_running()
     data = monitor.status()
     data['bot'] = ai_bot.state_to_dict(state)
     return data
@@ -175,6 +189,7 @@ def _force_demo_trade(db: Session, decision) -> dict:
     db.add(decision)
     db.commit()
     legacy_bot.snapshot_history(db)
+    monitor.write_log(db, 'success', 'manual_auto_order', f'Открыта сделка вручную: {trade.side.upper()} {trade.market}, сумма {trade.quote_amount:.2f} USDT, цена {trade.price:.8f}.', market=trade.market, action=trade.side, score=decision.score)
     return {'executed': True, 'mode': 'demo', 'decision': decision_to_dict(decision), 'trade': trade.model_dump(mode='json')}
 
 
@@ -192,6 +207,7 @@ async def auto_trade(market: str | None = None, _: str = Depends(require_auth), 
     state = ai_bot.get_or_create_state(db)
     decision = await ai_bot.make_decision(db, market)
     if state.trade_mode == 'live':
+        monitor.write_log(db, 'warning', 'live_order_pending', f'Live-режим включен. Сигнал {decision.market} найден, но CoinEx live adapter еще не подключен.', market=decision.market, action=decision.action, score=decision.score)
         return {'executed': False, 'mode': 'live', 'decision': decision_to_dict(decision), 'message': 'Live mode is selected. CoinEx execution adapter is the next implementation step.'}
     return _force_demo_trade(db, decision)
 
