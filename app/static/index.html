@@ -8,17 +8,20 @@
   <style>
     body { margin: 0; font-family: Arial, sans-serif; background: #0b1020; color: #e7ecff; }
     header { padding: 16px 20px; display: flex; gap: 12px; align-items: center; border-bottom: 1px solid #1e2947; flex-wrap: wrap; }
-    input, button { padding: 10px 12px; border-radius: 8px; border: 1px solid #344266; background: #111936; color: #e7ecff; }
+    input, button, select { padding: 10px 12px; border-radius: 8px; border: 1px solid #344266; background: #111936; color: #e7ecff; }
     button { cursor: pointer; }
-    main { display: grid; grid-template-columns: 1fr 340px; gap: 16px; padding: 16px; }
+    main { display: grid; grid-template-columns: 1fr 380px; gap: 16px; padding: 16px; }
     #chart { height: 620px; background: #0f1730; border-radius: 14px; overflow: hidden; }
     .panel { background: #0f1730; border: 1px solid #1e2947; border-radius: 14px; padding: 16px; }
     .metric { margin-bottom: 14px; }
     .label { color: #8fa0d0; font-size: 12px; }
     .value { font-size: 20px; margin-top: 4px; }
     .pill { padding: 6px 10px; border-radius: 999px; background: #162042; color: #9fb2ff; border: 1px solid #2b3a68; }
+    .danger { border-color: #7f1d1d; color: #fecaca; }
+    .ok { border-color: #14532d; color: #bbf7d0; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
     pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #b8c4ef; max-height: 260px; overflow: auto; }
-    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+    @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -26,6 +29,9 @@
     <strong>Trade Autopilot</strong>
     <input id="market" value="BTCUSDT" />
     <button onclick="loadMarket()">Загрузить</button>
+    <button onclick="analyze()">AI анализ</button>
+    <button onclick="decide()">AI решение</button>
+    <button onclick="autoDemoTrade()">Авто демо-сделка</button>
     <span class="pill" id="status">подключение...</span>
     <span class="pill" id="source">source: —</span>
   </header>
@@ -43,6 +49,23 @@
       <div class="metric">
         <div class="label">Equity</div>
         <div class="value" id="equity">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Бот</div>
+        <div class="row">
+          <button onclick="setBotEnabled(true)">Вкл бота</button>
+          <button onclick="setBotEnabled(false)">Выкл бота</button>
+          <button class="danger" onclick="disableLive()">Live OFF</button>
+        </div>
+        <div class="row">
+          <input id="ack" placeholder="I_UNDERSTAND_LIVE_TRADING_RISK" />
+          <button class="danger" onclick="enableLive()">Live ON</button>
+        </div>
+        <pre id="botSettings">—</pre>
+      </div>
+      <div class="metric">
+        <div class="label">AI результат</div>
+        <pre id="aiResult">—</pre>
       </div>
       <div class="metric">
         <div class="label">Последнее событие</div>
@@ -94,14 +117,20 @@ function updateLiveCandle(price, tsMs) {
 }
 
 async function loadMarket() {
-  const market = document.getElementById('market').value.trim().toUpperCase() || 'BTCUSDT';
+  const market = getMarket();
   document.getElementById('status').textContent = 'загрузка истории...';
   const res = await fetch(`/api/v1/market/kline?market=${market}&period=1min&limit=200`);
   const json = await res.json();
   candleSeries.setData(normalizeKline(json));
   chart.timeScale().fitContent();
+  await loadMarkers(market);
   connectWs(market);
   loadAccount();
+  loadBotSettings();
+}
+
+function getMarket() {
+  return document.getElementById('market').value.trim().toUpperCase() || 'BTCUSDT';
 }
 
 async function loadAccount() {
@@ -109,6 +138,64 @@ async function loadAccount() {
   const acc = await res.json();
   document.getElementById('balance').textContent = `${Number(acc.balance).toFixed(2)} ${acc.quote_asset}`;
   document.getElementById('equity').textContent = `${Number(acc.equity).toFixed(2)} ${acc.quote_asset}`;
+}
+
+async function loadBotSettings() {
+  const res = await fetch('/api/v1/bot/settings');
+  const json = await res.json();
+  document.getElementById('botSettings').textContent = JSON.stringify(json, null, 2);
+}
+
+async function analyze() {
+  const res = await fetch(`/api/v1/bot/analyze?market=${getMarket()}`);
+  const json = await res.json();
+  document.getElementById('aiResult').textContent = JSON.stringify(json, null, 2);
+}
+
+async function decide() {
+  const res = await fetch(`/api/v1/bot/decide?market=${getMarket()}`, { method: 'POST' });
+  const json = await res.json();
+  document.getElementById('aiResult').textContent = JSON.stringify(json, null, 2);
+}
+
+async function autoDemoTrade() {
+  const res = await fetch(`/api/v1/bot/auto-demo-trade?market=${getMarket()}`, { method: 'POST' });
+  const json = await res.json();
+  document.getElementById('aiResult').textContent = JSON.stringify(json, null, 2);
+  await loadAccount();
+  await loadMarkers(getMarket());
+}
+
+async function setBotEnabled(enabled) {
+  await fetch(`/api/v1/bot/settings?enabled=${enabled}`, { method: 'POST' });
+  await loadBotSettings();
+}
+
+async function enableLive() {
+  const ack = encodeURIComponent(document.getElementById('ack').value.trim());
+  const res = await fetch(`/api/v1/bot/live/enable?ack=${ack}`, { method: 'POST' });
+  const json = await res.json();
+  document.getElementById('aiResult').textContent = JSON.stringify(json, null, 2);
+  await loadBotSettings();
+}
+
+async function disableLive() {
+  const res = await fetch('/api/v1/bot/live/disable', { method: 'POST' });
+  const json = await res.json();
+  document.getElementById('aiResult').textContent = JSON.stringify(json, null, 2);
+  await loadBotSettings();
+}
+
+async function loadMarkers(market) {
+  const res = await fetch(`/api/v1/dashboard/markers?market=${market}&limit=100`);
+  const json = await res.json();
+  const markers = (json.items || []).map(item => ({
+    time: item.time,
+    position: item.side === 'buy' ? 'belowBar' : 'aboveBar',
+    shape: item.side === 'buy' ? 'arrowUp' : 'arrowDown',
+    text: item.text,
+  }));
+  candleSeries.setMarkers(markers);
 }
 
 function connectWs(market) {
@@ -136,6 +223,9 @@ function connectWs(market) {
     if (acc) {
       document.getElementById('balance').textContent = `${Number(acc.balance).toFixed(2)} ${acc.quote_asset}`;
       document.getElementById('equity').textContent = `${Number(acc.equity).toFixed(2)} ${acc.quote_asset}`;
+    }
+    if (msg.bot_state) {
+      document.getElementById('botSettings').textContent = JSON.stringify(msg.bot_state, null, 2);
     }
   };
 
