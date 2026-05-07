@@ -41,6 +41,7 @@ def apply_safe_schema_patches() -> None:
             'min_signal_score': "FLOAT NOT NULL DEFAULT 65.0",
             'max_open_positions': "INTEGER NOT NULL DEFAULT 3",
             'max_quote_per_trade': "FLOAT NOT NULL DEFAULT 100.0",
+            'last_market': "VARCHAR(32) NOT NULL DEFAULT ''",
         })
     if 'demo_positions' in table_names:
         _add_missing_columns('demo_positions', {
@@ -52,6 +53,20 @@ def apply_safe_schema_patches() -> None:
             'unrealized_pnl_pct': "FLOAT NOT NULL DEFAULT 0.0",
             'opened_at': "TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL",
             'closed_at': "TIMESTAMP WITH TIME ZONE NULL",
+        })
+    if 'market_rules' in table_names:
+        _add_missing_columns('market_rules', {
+            'base_asset': "VARCHAR(16) NOT NULL DEFAULT ''",
+            'quote_asset': "VARCHAR(16) NOT NULL DEFAULT 'USDT'",
+            'min_amount': "FLOAT NOT NULL DEFAULT 0.0",
+            'min_quote_amount': "FLOAT NOT NULL DEFAULT 0.0",
+            'amount_precision': "INTEGER NOT NULL DEFAULT 8",
+            'price_precision': "INTEGER NOT NULL DEFAULT 8",
+            'maker_fee_rate': "FLOAT NOT NULL DEFAULT 0.002",
+            'taker_fee_rate': "FLOAT NOT NULL DEFAULT 0.002",
+            'is_trading_enabled': "BOOLEAN NOT NULL DEFAULT TRUE",
+            'raw_json': "TEXT NOT NULL DEFAULT '{}'",
+            'synced_at': "TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL",
         })
 
 
