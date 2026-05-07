@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from app.models import DemoAccountState, DemoTradeRecord
+from app.models import DemoAccountState, DemoPosition, DemoTradeRecord
 
 
 class DemoTrade(BaseModel):
@@ -34,13 +34,7 @@ class DemoAccountService:
     def _get_or_create_state(self, db: Session) -> DemoAccountState:
         state = db.get(DemoAccountState, 1)
         if state is None:
-            state = DemoAccountState(
-                id=1,
-                quote_asset=self.quote_asset,
-                balance=self.initial_balance,
-                equity=self.initial_balance,
-                realized_pnl=0.0,
-            )
+            state = DemoAccountState(id=1, quote_asset=self.quote_asset, balance=self.initial_balance, equity=self.initial_balance, realized_pnl=0.0)
             db.add(state)
             db.commit()
             db.refresh(state)
@@ -59,6 +53,7 @@ class DemoAccountService:
 
     def reset(self, db: Session) -> DemoAccount:
         db.query(DemoTradeRecord).delete()
+        db.query(DemoPosition).delete()
         state = self._get_or_create_state(db)
         state.quote_asset = self.quote_asset
         state.balance = self.initial_balance
@@ -73,32 +68,76 @@ class DemoAccountService:
         if price <= 0 or amount <= 0:
             raise ValueError('price and amount must be positive')
 
+        market = market.upper()
         quote_amount = price * amount
         side_normalized = side.lower()
         if side_normalized not in {'buy', 'sell'}:
             raise ValueError('side must be buy or sell')
 
         state = self._get_or_create_state(db)
+        position = db.query(DemoPosition).filter(DemoPosition.market == market, DemoPosition.is_open.is_(True)).first()
 
         if side_normalized == 'buy':
             if quote_amount > state.balance:
                 raise ValueError('not enough demo balance')
             state.balance -= quote_amount
+            if position is None:
+                position = DemoPosition(
+                    market=market,
+                    side='long',
+                    amount=amount,
+                    avg_entry_price=price,
+                    current_price=price,
+                    take_profit=price * 1.02,
+                    stop_loss=price * 0.99,
+                    unrealized_pnl=0.0,
+                    unrealized_pnl_pct=0.0,
+                    is_open=True,
+                )
+                db.add(position)
+            else:
+                total_cost = position.avg_entry_price * position.amount + quote_amount
+                position.amount += amount
+                position.avg_entry_price = total_cost / position.amount
+                position.current_price = price
+                position.take_profit = position.avg_entry_price * 1.02
+                position.stop_loss = position.avg_entry_price * 0.99
         else:
             state.balance += quote_amount
-            state.realized_pnl += quote_amount
+            if position is not None and position.amount > 0:
+                sell_amount = min(amount, position.amount)
+                realized = (price - position.avg_entry_price) * sell_amount
+                position.amount -= sell_amount
+                position.current_price = price
+                position.realized_pnl += realized
+                state.realized_pnl += realized
+                if position.amount <= 1e-12:
+                    position.amount = 0.0
+                    position.is_open = False
+                    position.closed_at = datetime.now(timezone.utc)
+            else:
+                state.realized_pnl += quote_amount
 
-        state.equity = state.balance
-        trade = DemoTradeRecord(
-            market=market.upper(),
-            side=side_normalized,
-            price=price,
-            amount=amount,
-            quote_amount=quote_amount,
-            reason=reason,
-        )
+        self.reprice_positions(db, {market: price})
+        state.equity = state.balance + self.open_positions_value(db)
+        trade = DemoTradeRecord(market=market, side=side_normalized, price=price, amount=amount, quote_amount=quote_amount, reason=reason)
         db.add(state)
         db.add(trade)
         db.commit()
         db.refresh(trade)
         return DemoTrade.model_validate(trade)
+
+    def reprice_positions(self, db: Session, prices: dict[str, float]) -> None:
+        for market, price in prices.items():
+            position = db.query(DemoPosition).filter(DemoPosition.market == market.upper(), DemoPosition.is_open.is_(True)).first()
+            if position is None or price <= 0:
+                continue
+            position.current_price = price
+            position.unrealized_pnl = (price - position.avg_entry_price) * position.amount
+            base = position.avg_entry_price * position.amount
+            position.unrealized_pnl_pct = (position.unrealized_pnl / base * 100) if base else 0.0
+            db.add(position)
+
+    def open_positions_value(self, db: Session) -> float:
+        positions = db.query(DemoPosition).filter(DemoPosition.is_open.is_(True)).all()
+        return sum(position.current_price * position.amount for position in positions)
