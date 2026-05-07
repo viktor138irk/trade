@@ -12,7 +12,8 @@ from app.core import get_settings
 from app.db import SessionLocal, get_db, init_db
 from app.demo_account import DemoAccountService
 from app.legacy_bot import LegacyBotService
-from app.models import DemoTradeRecord
+from app.market_rules import MarketRuleService
+from app.models import DemoTradeRecord, MarketRule
 from app.monitor import SignalMonitor
 
 settings = get_settings()
@@ -21,7 +22,8 @@ live_stream = CoinExLiveStream(settings.coinex_ws_spot, coinex)
 demo_service = DemoAccountService(settings.demo_initial_balance, settings.demo_quote_asset)
 ai_bot = AiTradingBot(coinex, settings.markets)
 legacy_bot = LegacyBotService()
-monitor = SignalMonitor(ai_bot, demo_service, legacy_bot)
+market_rules = MarketRuleService(coinex)
+monitor = SignalMonitor(ai_bot, demo_service, legacy_bot, market_rules)
 monitor_task: asyncio.Task | None = None
 
 app = FastAPI(title=settings.app_name)
@@ -83,6 +85,17 @@ async def create_demo_trade(market: str, side: str, price: float, amount: float,
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post('/api/v1/demo/close-full')
+async def close_demo_full_market(market: str, price: float, reason: str = 'manual full close', _: str = Depends(require_auth), db: Session = Depends(get_db)) -> dict:
+    try:
+        trade = demo_service.close_full_market(db, market, price, reason)
+        legacy_bot.snapshot_history(db)
+        monitor.write_log(db, 'success', 'manual_full_close', f'Вручную закрыта вся позиция {market.upper()}: объем {trade.amount:g}, цена {trade.price:.8f}.', market=market.upper(), action='sell')
+        return trade.model_dump(mode='json')
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get('/api/v1/market/kline')
 async def market_kline(market: str | None = None, period: str = '1min', limit: int = 100, _: str = Depends(require_auth)) -> dict:
     return await coinex.get_kline(market or settings.default_market, period, limit)
@@ -91,6 +104,20 @@ async def market_kline(market: str | None = None, period: str = '1min', limit: i
 @app.get('/api/v1/market/ticker')
 async def market_ticker(market: str | None = None, _: str = Depends(require_auth)) -> dict:
     return await coinex.get_ticker(market or settings.default_market)
+
+
+@app.post('/api/v1/market/rules/sync')
+async def sync_market_rules(_: str = Depends(require_auth), db: Session = Depends(get_db)) -> dict:
+    result = await market_rules.sync(db, settings.markets)
+    monitor.rules_synced = True
+    monitor.write_log(db, 'success', 'manual_coinex_rules_synced', f'Вручную синхронизированы лимиты и комиссии CoinEx: {result["synced"]} рынков.')
+    return result
+
+
+@app.get('/api/v1/market/rules')
+async def list_market_rules(_: str = Depends(require_auth), db: Session = Depends(get_db)) -> dict:
+    rows = db.query(MarketRule).order_by(MarketRule.market.asc()).all()
+    return {'items': [{'market': r.market, 'min_amount': r.min_amount, 'min_quote_amount': r.min_quote_amount, 'amount_precision': r.amount_precision, 'price_precision': r.price_precision, 'maker_fee_rate': r.maker_fee_rate, 'taker_fee_rate': r.taker_fee_rate, 'synced_at': r.synced_at.isoformat()} for r in rows]}
 
 
 @app.get('/api/v1/bot/settings')
@@ -183,13 +210,16 @@ def _force_demo_trade(db: Session, decision) -> dict:
     decision_data = decision_to_dict(decision)
     price = float(decision_data['indicators']['last_price'])
     side = decision.action if decision.action in {'buy', 'sell'} else 'buy'
-    amount = max(1.0, state.max_quote_per_trade) / price
-    trade = demo_service.add_demo_trade(db, decision.market, side, price, amount, decision.reason)
+    if side == 'buy':
+        amount, rule_message = market_rules.ensure_amount(db, decision.market, max(1.0, state.max_quote_per_trade), price)
+        trade = demo_service.add_demo_trade(db, decision.market, 'buy', price, amount, f'{decision.reason}; {rule_message}')
+    else:
+        trade = demo_service.close_full_market(db, decision.market, price, decision.reason)
     decision.executed = True
     db.add(decision)
     db.commit()
     legacy_bot.snapshot_history(db)
-    monitor.write_log(db, 'success', 'manual_auto_order', f'Открыта сделка вручную: {trade.side.upper()} {trade.market}, сумма {trade.quote_amount:.2f} USDT, цена {trade.price:.8f}.', market=trade.market, action=trade.side, score=decision.score)
+    monitor.write_log(db, 'success', 'manual_auto_order', f'Открыта/закрыта сделка вручную: {trade.side.upper()} {trade.market}, сумма {trade.quote_amount:.2f} USDT, цена {trade.price:.8f}.', market=trade.market, action=trade.side, score=decision.score)
     return {'executed': True, 'mode': 'demo', 'decision': decision_to_dict(decision), 'trade': trade.model_dump(mode='json')}
 
 
@@ -207,8 +237,8 @@ async def auto_trade(market: str | None = None, _: str = Depends(require_auth), 
     state = ai_bot.get_or_create_state(db)
     decision = await ai_bot.make_decision(db, market)
     if state.trade_mode == 'live':
-        monitor.write_log(db, 'warning', 'live_order_pending', f'Live-режим включен. Сигнал {decision.market} найден, но CoinEx live adapter еще не подключен.', market=decision.market, action=decision.action, score=decision.score)
-        return {'executed': False, 'mode': 'live', 'decision': decision_to_dict(decision), 'message': 'Live mode is selected. CoinEx execution adapter is the next implementation step.'}
+        monitor.write_log(db, 'warning', 'live_order_pending', f'Live-режим включен. Сигнал {decision.market} найден, перед реальным закрытием нужно сверить доступный баланс/позицию по API CoinEx.', market=decision.market, action=decision.action, score=decision.score)
+        return {'executed': False, 'mode': 'live', 'decision': decision_to_dict(decision), 'message': 'Live mode is selected. CoinEx execution adapter must verify exchange balance before order.'}
     return _force_demo_trade(db, decision)
 
 
