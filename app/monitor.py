@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.ai_bot import AiTradingBot, decision_to_dict
 from app.demo_account import DemoAccountService
 from app.legacy_bot import LegacyBotService
+from app.models import BotLog
 
 
 class SignalMonitor:
@@ -33,9 +34,11 @@ class SignalMonitor:
             'last_run_at': self.last_run_at.isoformat() if self.last_run_at else None,
         }
 
-    async def loop(self, session_factory, interval_seconds: int = 20) -> None:
+    async def loop(self, session_factory, interval_seconds: int = 10) -> None:
         self.running = True
         self.last_status = 'Запущен'
+        with session_factory() as db:
+            self.write_log(db, 'info', 'monitor_started', 'Мониторинг автоторговли запущен. Бот без остановки ищет выгодные сделки.')
         while self.running:
             try:
                 with session_factory() as db:
@@ -43,6 +46,8 @@ class SignalMonitor:
             except Exception as exc:  # noqa: BLE001 - monitor must not kill the app
                 self.last_error = str(exc)
                 self.last_status = 'Ошибка мониторинга'
+                with session_factory() as db:
+                    self.write_log(db, 'error', 'monitor_error', f'Ошибка мониторинга: {exc}')
             await asyncio.sleep(interval_seconds)
 
     def stop(self) -> None:
@@ -54,16 +59,29 @@ class SignalMonitor:
         self.last_run_at = datetime.now(timezone.utc)
         if not state.enabled:
             self.last_status = 'Бот выключен'
+            self.write_log(db, 'warning', 'bot_disabled', 'Мониторинг проверил состояние: бот выключен, сделка не открывается.')
             return self.status()
         if state.emergency_stop:
             self.last_status = 'Emergency stop'
+            self.write_log(db, 'warning', 'emergency_stop', 'Аварийная остановка активна. Новые сделки не открываются.')
             return self.status()
 
+        self.write_log(db, 'info', 'scan_started', 'Сканирую рынки и ищу лучшую сделку.')
         decision = await self.ai_bot.make_decision(db, None)
         data = decision_to_dict(decision)
         self.last_market = decision.market
         self.last_action = decision.action
         self.last_score = decision.score
+        action_ru = {'buy': 'покупка', 'sell': 'продажа', 'hold': 'ожидание'}.get(decision.action, decision.action)
+        self.write_log(
+            db,
+            'info',
+            'signal_found',
+            f'Найден сигнал: {decision.market}, действие: {action_ru}, оценка AI: {decision.score:.1f}/100.',
+            market=decision.market,
+            action=decision.action,
+            score=decision.score,
+        )
 
         if state.trade_mode == 'demo' and decision.action in {'buy', 'sell'} and decision.score >= state.min_signal_score:
             price = float(data['indicators']['last_price'])
@@ -74,8 +92,55 @@ class SignalMonitor:
             db.commit()
             self.legacy_bot.snapshot_history(db)
             self.last_status = f'Открыта демо-сделка {trade.side.upper()} {trade.market}'
-        elif state.trade_mode == 'live':
+            self.write_log(
+                db,
+                'success',
+                'demo_order_opened',
+                f'Открыта демо-сделка: {trade.side.upper()} {trade.market}, сумма {trade.quote_amount:.2f} USDT, цена {trade.price:.8f}.',
+                market=trade.market,
+                action=trade.side,
+                score=decision.score,
+            )
+        elif state.trade_mode == 'live' and decision.action in {'buy', 'sell'} and decision.score >= state.min_signal_score:
             self.last_status = 'Найден live-сигнал, ожидает live adapter'
+            self.write_log(
+                db,
+                'warning',
+                'live_signal_waiting',
+                f'Live-сигнал найден: {decision.market}, {action_ru}, оценка {decision.score:.1f}. Live-адаптер ордеров еще не подключен.',
+                market=decision.market,
+                action=decision.action,
+                score=decision.score,
+            )
         else:
             self.last_status = 'Сигнал слабый, сделка не открыта'
+            self.write_log(
+                db,
+                'info',
+                'signal_skipped',
+                f'Сделка пропущена: {decision.market}, оценка {decision.score:.1f}, минимум {state.min_signal_score:.1f}.',
+                market=decision.market,
+                action=decision.action,
+                score=decision.score,
+            )
         return self.status()
+
+    def write_log(self, db: Session, level: str, event: str, message: str, market: str = '', action: str = '', score: float = 0.0) -> None:
+        db.add(BotLog(level=level, event=event, message=message, market=market, action=action, score=score))
+        db.commit()
+
+    def recent_logs(self, db: Session, limit: int = 100) -> list[dict[str, Any]]:
+        rows = db.query(BotLog).order_by(BotLog.id.desc()).limit(limit).all()
+        return [
+            {
+                'id': row.id,
+                'level': row.level,
+                'event': row.event,
+                'message': row.message,
+                'market': row.market,
+                'action': row.action,
+                'score': row.score,
+                'created_at': row.created_at.isoformat(),
+            }
+            for row in rows
+        ]
