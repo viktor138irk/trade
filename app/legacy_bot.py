@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -18,9 +17,9 @@ from app.models import (
 
 
 DEFAULT_STRATEGIES = [
-    ('AI News Scalper', '1min', 'BTCUSDT,ETHUSDT,SOLUSDT'),
-    ('Trend Follow', '5min', 'BTCUSDT,ETHUSDT'),
-    ('Volatility Catcher', '1min', 'SOLUSDT,XRPUSDT,DOGEUSDT'),
+    ('AI News Scalper', '1min', 'ALL_USDT'),
+    ('Trend Follow', '5min', 'ALL_USDT'),
+    ('Volatility Catcher', '1min', 'ALL_USDT'),
 ]
 
 
@@ -41,6 +40,9 @@ class LegacyBotService:
         account = db.get(DemoAccountState, 1)
         balance = account.balance if account else 0.0
         realized = account.realized_pnl if account else 0.0
+        unrealized = sum(item.unrealized_pnl for item in db.query(DemoPosition).filter(DemoPosition.is_open.is_(True)).all())
+        open_value = sum(item.current_price * item.amount for item in db.query(DemoPosition).filter(DemoPosition.is_open.is_(True)).all())
+        equity = balance + open_value
         trades_total = db.query(DemoTradeRecord).count()
         open_positions = db.query(DemoPosition).filter(DemoPosition.is_open.is_(True)).count()
         closed_positions = db.query(DemoPosition).filter(DemoPosition.is_open.is_(False)).count()
@@ -51,7 +53,11 @@ class LegacyBotService:
         return {
             'kpi': {
                 'balance': balance,
+                'equity': equity,
                 'realized_pnl': realized,
+                'unrealized_pnl': unrealized,
+                'total_pnl': realized + unrealized,
+                'open_positions_value': open_value,
                 'trades_total': trades_total,
                 'open_positions': open_positions,
                 'closed_positions': closed_positions,
@@ -85,12 +91,12 @@ class LegacyBotService:
         ]
 
     def snapshot_history(self, db: Session) -> dict[str, Any]:
-        account = db.get(DemoAccountState, 1)
+        dash = self.dashboard(db)
         point = ChartHistoryPoint(
-            balance=account.balance if account else 0.0,
-            pnl_total=account.realized_pnl if account else 0.0,
-            open_trades=db.query(DemoPosition).filter(DemoPosition.is_open.is_(True)).count(),
-            closed_trades=db.query(DemoPosition).filter(DemoPosition.is_open.is_(False)).count(),
+            balance=dash['kpi']['equity'],
+            pnl_total=dash['kpi']['total_pnl'],
+            open_trades=dash['kpi']['open_positions'],
+            closed_trades=dash['kpi']['closed_positions'],
         )
         db.add(point)
         db.commit()
@@ -161,7 +167,8 @@ class LegacyBotService:
             'ok': True,
             'mode': dash['coinex']['mode'],
             'balance': dash['kpi']['balance'],
-            'pnl': dash['kpi']['realized_pnl'],
+            'equity': dash['kpi']['equity'],
+            'pnl': dash['kpi']['total_pnl'],
             'open_positions': dash['kpi']['open_positions'],
             'active_strategies': dash['kpi']['active_strategies'],
         }
