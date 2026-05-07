@@ -23,6 +23,7 @@ Current implementation status:
 - Dockerfile, docker-compose.yml, requirements.txt, .env.example and .gitignore added
 - docker-compose includes api, postgres and redis services
 - README no longer exposes the server IP
+- scripts/fix_monitor_start.py added to patch monitor stop/start restart race on server.
 
 Trading rules now implemented:
 - Bot syncs CoinEx public market rules: min amount, min quote amount, amount precision, price precision, maker/taker fee placeholders.
@@ -53,6 +54,11 @@ Important user preference:
 - Bot must not get stuck on one market.
 - Closing must use the full available amount for that market; in live mode verify through CoinEx API first.
 - Live mode should eventually execute buy/sell just like demo when signal passes score, after balance verification.
+
+Known monitor issue and patch:
+- If monitor was stopped and started quickly, old async task could remain alive but sleeping while monitor.running was false, so a new monitor task was not created.
+- Apply patch after git pull on server: python3 scripts/fix_monitor_start.py
+- Then rebuild: docker compose down && docker compose up -d --build
 
 Current limitation:
 - Live mode switch is implemented in settings and UI.
