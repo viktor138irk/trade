@@ -1,17 +1,17 @@
-import asyncio
 from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
-from app.coinex import CoinExClient
+from app.coinex import CoinExClient, CoinExLiveStream
 from app.core import get_settings
 from app.db import SessionLocal, get_db, init_db
 from app.demo_account import DemoAccountService
 
 settings = get_settings()
 coinex = CoinExClient(settings.coinex_api_base)
+live_stream = CoinExLiveStream(settings.coinex_ws_spot, coinex)
 demo_service = DemoAccountService(settings.demo_initial_balance, settings.demo_quote_asset)
 
 app = FastAPI(title=settings.app_name)
@@ -38,6 +38,7 @@ async def health() -> dict:
         'trade_mode': settings.trade_mode,
         'live_enabled': settings.live_enabled,
         'default_market': settings.default_market,
+        'coinex_ws_spot': settings.coinex_ws_spot,
     }
 
 
@@ -81,16 +82,10 @@ async def market_ticker(market: str | None = None) -> dict:
 async def market_stream(websocket: WebSocket, market: str) -> None:
     await websocket.accept()
     try:
-        while True:
-            ticker = await coinex.get_ticker(market)
+        async for live_event in live_stream.trades(market):
             with SessionLocal() as db:
                 account = demo_service.snapshot(db).model_dump(mode='json')
-            await websocket.send_json({
-                'type': 'ticker',
-                'market': market.upper(),
-                'data': ticker,
-                'demo_account': account,
-            })
-            await asyncio.sleep(3)
+            live_event['demo_account'] = account
+            await websocket.send_json(live_event)
     except WebSocketDisconnect:
         return
