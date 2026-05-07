@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Trade Autopilot</title>
+  <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background: #0b1020; color: #e7ecff; }
+    header { padding: 16px 20px; display: flex; gap: 12px; align-items: center; border-bottom: 1px solid #1e2947; }
+    input, button { padding: 10px 12px; border-radius: 8px; border: 1px solid #344266; background: #111936; color: #e7ecff; }
+    button { cursor: pointer; }
+    main { display: grid; grid-template-columns: 1fr 320px; gap: 16px; padding: 16px; }
+    #chart { height: 560px; background: #0f1730; border-radius: 14px; overflow: hidden; }
+    .panel { background: #0f1730; border: 1px solid #1e2947; border-radius: 14px; padding: 16px; }
+    .metric { margin-bottom: 12px; }
+    .label { color: #8fa0d0; font-size: 12px; }
+    .value { font-size: 20px; margin-top: 4px; }
+    pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #b8c4ef; }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Trade Autopilot</strong>
+    <input id="market" value="BTCUSDT" />
+    <button onclick="loadMarket()">Загрузить</button>
+    <span id="status">demo mode</span>
+  </header>
+  <main>
+    <section id="chart"></section>
+    <aside class="panel">
+      <div class="metric">
+        <div class="label">Демо баланс</div>
+        <div class="value" id="balance">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Equity</div>
+        <div class="value" id="equity">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Последний тикер</div>
+        <pre id="ticker">—</pre>
+      </div>
+    </aside>
+  </main>
+
+<script>
+const chartEl = document.getElementById('chart');
+const chart = LightweightCharts.createChart(chartEl, {
+  layout: { background: { color: '#0f1730' }, textColor: '#d7defa' },
+  grid: { vertLines: { color: '#1b2748' }, horzLines: { color: '#1b2748' } },
+  timeScale: { timeVisible: true, secondsVisible: false },
+});
+const candleSeries = chart.addCandlestickSeries();
+let socket;
+
+function normalizeKline(raw) {
+  const rows = raw.data || [];
+  return rows.map(row => ({
+    time: Math.floor(Number(row.created_at || row[0]) / 1000),
+    open: Number(row.open || row[1]),
+    high: Number(row.high || row[3]),
+    low: Number(row.low || row[4]),
+    close: Number(row.close || row[2]),
+  })).filter(x => Number.isFinite(x.time) && Number.isFinite(x.close));
+}
+
+async function loadMarket() {
+  const market = document.getElementById('market').value.trim().toUpperCase() || 'BTCUSDT';
+  const res = await fetch(`/api/v1/market/kline?market=${market}&period=1min&limit=200`);
+  const json = await res.json();
+  candleSeries.setData(normalizeKline(json));
+  chart.timeScale().fitContent();
+  connectWs(market);
+  loadAccount();
+}
+
+async function loadAccount() {
+  const res = await fetch('/api/v1/demo/account');
+  const acc = await res.json();
+  document.getElementById('balance').textContent = `${Number(acc.balance).toFixed(2)} ${acc.quote_asset}`;
+  document.getElementById('equity').textContent = `${Number(acc.equity).toFixed(2)} ${acc.quote_asset}`;
+}
+
+function connectWs(market) {
+  if (socket) socket.close();
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  socket = new WebSocket(`${proto}://${location.host}/ws/market/${market}`);
+  socket.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    document.getElementById('ticker').textContent = JSON.stringify(msg.data, null, 2).slice(0, 1200);
+    const acc = msg.demo_account;
+    if (acc) {
+      document.getElementById('balance').textContent = `${Number(acc.balance).toFixed(2)} ${acc.quote_asset}`;
+      document.getElementById('equity').textContent = `${Number(acc.equity).toFixed(2)} ${acc.quote_asset}`;
+    }
+  };
+}
+
+window.addEventListener('resize', () => chart.applyOptions({ width: chartEl.clientWidth }));
+loadMarket();
+</script>
+</body>
+</html>
