@@ -5,7 +5,7 @@
 ## Режимы
 
 - `demo` — режим по умолчанию. Виртуальный баланс, виртуальные сделки, история и PnL.
-- `live` — защищенный режим для подключения биржевого исполнения. По умолчанию выключен и требует явного подтверждения риска.
+- `live` — режим работы с live-счетом. Переключается в настройках бота.
 
 ## Быстрый старт
 
@@ -43,7 +43,7 @@ Endpoints:
 curl http://localhost:8000/api/v1/bot/settings
 curl "http://localhost:8000/api/v1/bot/analyze?market=BTCUSDT"
 curl -X POST "http://localhost:8000/api/v1/bot/decide?market=BTCUSDT"
-curl -X POST "http://localhost:8000/api/v1/bot/auto-demo-trade?market=BTCUSDT"
+curl -X POST "http://localhost:8000/api/v1/bot/auto-trade?market=BTCUSDT"
 ```
 
 Manual signal:
@@ -52,27 +52,19 @@ Manual signal:
 curl -X POST "http://localhost:8000/api/v1/signals/manual?title=BTC bullish news&market=BTCUSDT&sentiment=positive&score=80"
 ```
 
-## Live mode guard
+## Переключение Demo / Live
 
-Live mode requires all of these:
-
-```env
-TRADE_MODE=live
-ENABLE_LIVE_TRADING=true
-COINEX_ACCESS_ID=...
-COINEX_SECRET_KEY=...
-```
-
-Then enable through API with acknowledgement:
+Через API:
 
 ```bash
-curl -X POST "http://localhost:8000/api/v1/bot/live/enable?ack=I_UNDERSTAND_LIVE_TRADING_RISK"
+curl -X POST "http://localhost:8000/api/v1/bot/settings?trade_mode=demo"
+curl -X POST "http://localhost:8000/api/v1/bot/settings?trade_mode=live"
 ```
 
-Disable live mode:
+Через dashboard:
 
-```bash
-curl -X POST http://localhost:8000/api/v1/bot/live/disable
+```text
+Настройки -> Demo счет / Live счет
 ```
 
 ## Установка Git на сервер
@@ -129,7 +121,3 @@ app/
   static/        live dashboard
   main.py        FastAPI entrypoint
 ```
-
-## Важно
-
-Проект стартует с демо-счета. Реальное исполнение должно проходить через защищенный live guard, риск-лимиты и аварийную остановку.
