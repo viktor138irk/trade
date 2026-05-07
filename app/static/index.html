@@ -31,7 +31,7 @@
     <button onclick="loadMarket()">Загрузить</button>
     <button onclick="analyze()">AI анализ</button>
     <button onclick="decide()">AI решение</button>
-    <button onclick="autoDemoTrade()">Авто демо-сделка</button>
+    <button onclick="autoTrade()">Авто сделка</button>
     <span class="pill" id="status">подключение...</span>
     <span class="pill" id="source">source: —</span>
   </header>
@@ -51,15 +51,14 @@
         <div class="value" id="equity">—</div>
       </div>
       <div class="metric">
-        <div class="label">Бот</div>
+        <div class="label">Настройки</div>
         <div class="row">
           <button onclick="setBotEnabled(true)">Вкл бота</button>
           <button onclick="setBotEnabled(false)">Выкл бота</button>
-          <button class="danger" onclick="disableLive()">Live OFF</button>
         </div>
         <div class="row">
-          <input id="ack" placeholder="I_UNDERSTAND_LIVE_TRADING_RISK" />
-          <button class="danger" onclick="enableLive()">Live ON</button>
+          <button class="ok" onclick="setMode('demo')">Demo счет</button>
+          <button class="danger" onclick="setMode('live')">Live счет</button>
         </div>
         <pre id="botSettings">—</pre>
       </div>
@@ -158,8 +157,8 @@ async function decide() {
   document.getElementById('aiResult').textContent = JSON.stringify(json, null, 2);
 }
 
-async function autoDemoTrade() {
-  const res = await fetch(`/api/v1/bot/auto-demo-trade?market=${getMarket()}`, { method: 'POST' });
+async function autoTrade() {
+  const res = await fetch(`/api/v1/bot/auto-trade?market=${getMarket()}`, { method: 'POST' });
   const json = await res.json();
   document.getElementById('aiResult').textContent = JSON.stringify(json, null, 2);
   await loadAccount();
@@ -171,16 +170,8 @@ async function setBotEnabled(enabled) {
   await loadBotSettings();
 }
 
-async function enableLive() {
-  const ack = encodeURIComponent(document.getElementById('ack').value.trim());
-  const res = await fetch(`/api/v1/bot/live/enable?ack=${ack}`, { method: 'POST' });
-  const json = await res.json();
-  document.getElementById('aiResult').textContent = JSON.stringify(json, null, 2);
-  await loadBotSettings();
-}
-
-async function disableLive() {
-  const res = await fetch('/api/v1/bot/live/disable', { method: 'POST' });
+async function setMode(mode) {
+  const res = await fetch(`/api/v1/bot/settings?trade_mode=${mode}`, { method: 'POST' });
   const json = await res.json();
   document.getElementById('aiResult').textContent = JSON.stringify(json, null, 2);
   await loadBotSettings();
