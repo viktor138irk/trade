@@ -6,70 +6,85 @@
   <title>Trade Autopilot</title>
   <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
   <style>
-    body { margin: 0; font-family: Arial, sans-serif; background: #0b1020; color: #e7ecff; }
-    header { padding: 16px 20px; display: flex; gap: 12px; align-items: center; border-bottom: 1px solid #1e2947; flex-wrap: wrap; }
-    input, button, select { padding: 10px 12px; border-radius: 8px; border: 1px solid #344266; background: #111936; color: #e7ecff; }
-    button { cursor: pointer; }
-    main { display: grid; grid-template-columns: 1fr 380px; gap: 16px; padding: 16px; }
-    #chart { height: 620px; background: #0f1730; border-radius: 14px; overflow: hidden; }
-    .panel { background: #0f1730; border: 1px solid #1e2947; border-radius: 14px; padding: 16px; }
-    .metric { margin-bottom: 14px; }
-    .label { color: #8fa0d0; font-size: 12px; }
-    .value { font-size: 20px; margin-top: 4px; }
-    .pill { padding: 6px 10px; border-radius: 999px; background: #162042; color: #9fb2ff; border: 1px solid #2b3a68; }
-    .danger { border-color: #7f1d1d; color: #fecaca; }
-    .ok { border-color: #14532d; color: #bbf7d0; }
-    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-    pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #b8c4ef; max-height: 260px; overflow: auto; }
-    @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+    :root { --bg:#080d1b; --card:#101936; --line:#25345f; --text:#eef3ff; --muted:#91a2d6; --accent:#7aa2ff; --good:#22c55e; --bad:#ef4444; --warn:#f59e0b; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, Arial, sans-serif; background: radial-gradient(circle at top left, #172554 0, var(--bg) 40%); color: var(--text); }
+    header { padding: 18px 22px; display: flex; justify-content: space-between; gap: 16px; align-items: center; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+    .brand { font-size: 22px; font-weight: 800; letter-spacing: .2px; }
+    .topbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    select, button { padding: 11px 13px; border-radius: 10px; border: 1px solid #33446f; background: #101936; color: var(--text); font-weight: 650; }
+    button { cursor: pointer; transition: .15s ease; }
+    button:hover { transform: translateY(-1px); border-color: var(--accent); }
+    main { display: grid; grid-template-columns: 1fr 390px; gap: 18px; padding: 18px; }
+    #chart { height: 640px; background: var(--card); border-radius: 18px; overflow: hidden; border: 1px solid var(--line); }
+    .panel, .card { background: rgba(16,25,54,.94); border: 1px solid var(--line); border-radius: 18px; padding: 16px; box-shadow: 0 18px 40px rgba(0,0,0,.22); }
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
+    .label { color: var(--muted); font-size: 12px; margin-bottom: 7px; }
+    .value { font-size: 21px; font-weight: 800; }
+    .pill { padding: 7px 11px; border-radius: 999px; background: #162042; color: #b7c7ff; border: 1px solid #2b3a68; font-size: 13px; }
+    .pill.good { color: #bbf7d0; border-color: #166534; }
+    .pill.bad { color: #fecaca; border-color: #7f1d1d; }
+    .row { display: flex; gap: 9px; flex-wrap: wrap; margin: 10px 0; }
+    .primary { background: linear-gradient(135deg, #2563eb, #7c3aed); border-color: #7aa2ff; }
+    .good { border-color: #166534; color: #bbf7d0; }
+    .bad { border-color: #7f1d1d; color: #fecaca; }
+    .wide { width: 100%; }
+    pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #c2cef7; max-height: 220px; overflow: auto; background:#0b1228; padding: 12px; border-radius: 12px; border: 1px solid #202e56; }
+    .headline { font-size: 15px; font-weight: 800; margin-bottom: 8px; }
+    .muted { color: var(--muted); font-size: 13px; }
+    @media (max-width: 1080px) { main { grid-template-columns: 1fr; } .cards { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <header>
-    <strong>Trade Autopilot</strong>
-    <input id="market" value="BTCUSDT" />
-    <button onclick="loadMarket()">Загрузить</button>
-    <button onclick="analyze()">AI анализ</button>
-    <button onclick="decide()">AI решение</button>
-    <button onclick="autoTrade()">Авто сделка</button>
-    <span class="pill" id="status">подключение...</span>
-    <span class="pill" id="source">source: —</span>
+    <div>
+      <div class="brand">Trade Autopilot</div>
+      <div class="muted">AI-бот, демо/лайв режим, live-график и автоподбор пары</div>
+    </div>
+    <div class="topbar">
+      <select id="marketSelect"></select>
+      <button onclick="loadSelectedMarket()">Открыть пару</button>
+      <button class="primary" onclick="autoPickMarket()">Автовыбор пары</button>
+      <span class="pill" id="status">загрузка...</span>
+      <span class="pill" id="source">source: —</span>
+    </div>
   </header>
+
   <main>
-    <section id="chart"></section>
+    <section>
+      <div class="cards">
+        <div class="card"><div class="label">Live цена</div><div class="value" id="livePrice">—</div></div>
+        <div class="card"><div class="label">Демо баланс</div><div class="value" id="balance">—</div></div>
+        <div class="card"><div class="label">Режим</div><div class="value" id="modeLabel">—</div></div>
+      </div>
+      <div id="chart"></div>
+    </section>
+
     <aside class="panel">
-      <div class="metric">
-        <div class="label">Live цена</div>
-        <div class="value" id="livePrice">—</div>
+      <div class="headline">Управление</div>
+      <div class="row">
+        <button class="good" onclick="setMode('demo')">Demo счет</button>
+        <button class="bad" onclick="setMode('live')">Live счет</button>
       </div>
-      <div class="metric">
-        <div class="label">Демо баланс</div>
-        <div class="value" id="balance">—</div>
+      <div class="row">
+        <button onclick="setBotEnabled(true)">Включить бота</button>
+        <button onclick="setBotEnabled(false)">Выключить бота</button>
       </div>
-      <div class="metric">
-        <div class="label">Equity</div>
-        <div class="value" id="equity">—</div>
+      <button class="primary wide" onclick="autoTrade()">Запустить авто-сделку</button>
+
+      <div style="height:14px"></div>
+      <div class="headline">AI</div>
+      <div class="row">
+        <button onclick="analyze()">Анализ текущей пары</button>
+        <button onclick="decide()">Решение AI</button>
       </div>
-      <div class="metric">
-        <div class="label">Настройки</div>
-        <div class="row">
-          <button onclick="setBotEnabled(true)">Вкл бота</button>
-          <button onclick="setBotEnabled(false)">Выкл бота</button>
-        </div>
-        <div class="row">
-          <button class="ok" onclick="setMode('demo')">Demo счет</button>
-          <button class="danger" onclick="setMode('live')">Live счет</button>
-        </div>
-        <pre id="botSettings">—</pre>
-      </div>
-      <div class="metric">
-        <div class="label">AI результат</div>
-        <pre id="aiResult">—</pre>
-      </div>
-      <div class="metric">
-        <div class="label">Последнее событие</div>
-        <pre id="ticker">—</pre>
-      </div>
+      <pre id="aiResult">AI-результат появится здесь.</pre>
+
+      <div class="headline">Настройки</div>
+      <pre id="botSettings">—</pre>
+
+      <div class="headline">Последнее событие</div>
+      <pre id="ticker">—</pre>
     </aside>
   </main>
 
@@ -78,13 +93,34 @@ const chartEl = document.getElementById('chart');
 const chart = LightweightCharts.createChart(chartEl, {
   width: chartEl.clientWidth,
   height: chartEl.clientHeight,
-  layout: { background: { color: '#0f1730' }, textColor: '#d7defa' },
+  layout: { background: { color: '#101936' }, textColor: '#d7defa' },
   grid: { vertLines: { color: '#1b2748' }, horzLines: { color: '#1b2748' } },
   timeScale: { timeVisible: true, secondsVisible: false },
 });
 const candleSeries = chart.addCandlestickSeries();
 let socket;
 let currentCandle = null;
+let appState = null;
+
+function getMarket() { return document.getElementById('marketSelect').value || 'BTCUSDT'; }
+function setJson(id, obj) { document.getElementById(id).textContent = JSON.stringify(obj, null, 2); }
+
+async function bootstrap() {
+  const res = await fetch('/api/v1/app/bootstrap');
+  appState = await res.json();
+  const select = document.getElementById('marketSelect');
+  select.innerHTML = '';
+  for (const market of appState.markets || ['BTCUSDT']) {
+    const opt = document.createElement('option');
+    opt.value = market;
+    opt.textContent = market;
+    if (market === appState.default_market) opt.selected = true;
+    select.appendChild(opt);
+  }
+  renderAccount(appState.account);
+  renderSettings(appState.bot);
+  await loadSelectedMarket();
+}
 
 function normalizeKline(raw) {
   const rows = raw.data || [];
@@ -95,7 +131,6 @@ function normalizeKline(raw) {
     low: Number(row.low || row[4]),
     close: Number(row.close || row[2]),
   })).filter(x => Number.isFinite(x.time) && Number.isFinite(x.close));
-
   candles.sort((a, b) => a.time - b.time);
   currentCandle = candles.length ? candles[candles.length - 1] : null;
   return candles;
@@ -104,18 +139,13 @@ function normalizeKline(raw) {
 function updateLiveCandle(price, tsMs) {
   if (!Number.isFinite(price)) return;
   const bucket = Math.floor((tsMs || Date.now()) / 60000) * 60;
-  if (!currentCandle || currentCandle.time !== bucket) {
-    currentCandle = { time: bucket, open: price, high: price, low: price, close: price };
-  } else {
-    currentCandle.high = Math.max(currentCandle.high, price);
-    currentCandle.low = Math.min(currentCandle.low, price);
-    currentCandle.close = price;
-  }
+  if (!currentCandle || currentCandle.time !== bucket) currentCandle = { time: bucket, open: price, high: price, low: price, close: price };
+  else { currentCandle.high = Math.max(currentCandle.high, price); currentCandle.low = Math.min(currentCandle.low, price); currentCandle.close = price; }
   candleSeries.update(currentCandle);
   document.getElementById('livePrice').textContent = price.toFixed(8).replace(/0+$/, '').replace(/\.$/, '');
 }
 
-async function loadMarket() {
+async function loadSelectedMarket() {
   const market = getMarket();
   document.getElementById('status').textContent = 'загрузка истории...';
   const res = await fetch(`/api/v1/market/kline?market=${market}&period=1min&limit=200`);
@@ -124,68 +154,46 @@ async function loadMarket() {
   chart.timeScale().fitContent();
   await loadMarkers(market);
   connectWs(market);
-  loadAccount();
-  loadBotSettings();
+  await loadAccount();
 }
 
-function getMarket() {
-  return document.getElementById('market').value.trim().toUpperCase() || 'BTCUSDT';
+async function autoPickMarket() {
+  document.getElementById('status').textContent = 'AI выбирает пару...';
+  const res = await fetch('/api/v1/bot/best-market');
+  const json = await res.json();
+  if (json.market) {
+    document.getElementById('marketSelect').value = json.market;
+    setJson('aiResult', json);
+    await loadSelectedMarket();
+  } else setJson('aiResult', json);
 }
 
-async function loadAccount() {
-  const res = await fetch('/api/v1/demo/account');
-  const acc = await res.json();
+function renderAccount(acc) {
+  if (!acc) return;
   document.getElementById('balance').textContent = `${Number(acc.balance).toFixed(2)} ${acc.quote_asset}`;
-  document.getElementById('equity').textContent = `${Number(acc.equity).toFixed(2)} ${acc.quote_asset}`;
 }
-
-async function loadBotSettings() {
-  const res = await fetch('/api/v1/bot/settings');
-  const json = await res.json();
-  document.getElementById('botSettings').textContent = JSON.stringify(json, null, 2);
+function renderSettings(settings) {
+  if (!settings) return;
+  document.getElementById('modeLabel').textContent = (settings.trade_mode || 'demo').toUpperCase();
+  setJson('botSettings', settings);
 }
-
-async function analyze() {
-  const res = await fetch(`/api/v1/bot/analyze?market=${getMarket()}`);
-  const json = await res.json();
-  document.getElementById('aiResult').textContent = JSON.stringify(json, null, 2);
-}
-
-async function decide() {
-  const res = await fetch(`/api/v1/bot/decide?market=${getMarket()}`, { method: 'POST' });
-  const json = await res.json();
-  document.getElementById('aiResult').textContent = JSON.stringify(json, null, 2);
-}
-
+async function loadAccount() { const res = await fetch('/api/v1/demo/account'); renderAccount(await res.json()); }
+async function loadBotSettings() { const res = await fetch('/api/v1/bot/settings'); renderSettings(await res.json()); }
+async function analyze() { const res = await fetch(`/api/v1/bot/analyze?market=${getMarket()}`); setJson('aiResult', await res.json()); }
+async function decide() { const res = await fetch(`/api/v1/bot/decide?market=${getMarket()}`, { method: 'POST' }); setJson('aiResult', await res.json()); }
 async function autoTrade() {
   const res = await fetch(`/api/v1/bot/auto-trade?market=${getMarket()}`, { method: 'POST' });
-  const json = await res.json();
-  document.getElementById('aiResult').textContent = JSON.stringify(json, null, 2);
+  setJson('aiResult', await res.json());
   await loadAccount();
   await loadMarkers(getMarket());
 }
-
-async function setBotEnabled(enabled) {
-  await fetch(`/api/v1/bot/settings?enabled=${enabled}`, { method: 'POST' });
-  await loadBotSettings();
-}
-
-async function setMode(mode) {
-  const res = await fetch(`/api/v1/bot/settings?trade_mode=${mode}`, { method: 'POST' });
-  const json = await res.json();
-  document.getElementById('aiResult').textContent = JSON.stringify(json, null, 2);
-  await loadBotSettings();
-}
+async function setBotEnabled(enabled) { await fetch(`/api/v1/bot/settings?enabled=${enabled}`, { method: 'POST' }); await loadBotSettings(); }
+async function setMode(mode) { await fetch(`/api/v1/bot/settings?trade_mode=${mode}`, { method: 'POST' }); await loadBotSettings(); }
 
 async function loadMarkers(market) {
   const res = await fetch(`/api/v1/dashboard/markers?market=${market}&limit=100`);
   const json = await res.json();
-  const markers = (json.items || []).map(item => ({
-    time: item.time,
-    position: item.side === 'buy' ? 'belowBar' : 'aboveBar',
-    shape: item.side === 'buy' ? 'arrowUp' : 'arrowDown',
-    text: item.text,
-  }));
+  const markers = (json.items || []).map(item => ({ time: item.time, position: item.side === 'buy' ? 'belowBar' : 'aboveBar', shape: item.side === 'buy' ? 'arrowUp' : 'arrowDown', text: item.text }));
   candleSeries.setMarkers(markers);
 }
 
@@ -193,44 +201,22 @@ function connectWs(market) {
   if (socket) socket.close();
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   socket = new WebSocket(`${proto}://${location.host}/ws/market/${market}`);
-
-  socket.onopen = () => {
-    document.getElementById('status').textContent = `live: ${market}`;
-  };
-
+  socket.onopen = () => { document.getElementById('status').textContent = `live: ${market}`; };
   socket.onmessage = (event) => {
     const msg = JSON.parse(event.data);
     document.getElementById('ticker').textContent = JSON.stringify(msg, null, 2).slice(0, 1600);
     document.getElementById('source').textContent = `source: ${msg.source || msg.type}`;
-
-    if (msg.type === 'live_price') {
-      updateLiveCandle(Number(msg.price), Number(msg.ts));
-    }
-    if (msg.type === 'stream_warning') {
-      document.getElementById('status').textContent = 'fallback HTTP';
-    }
-
-    const acc = msg.demo_account;
-    if (acc) {
-      document.getElementById('balance').textContent = `${Number(acc.balance).toFixed(2)} ${acc.quote_asset}`;
-      document.getElementById('equity').textContent = `${Number(acc.equity).toFixed(2)} ${acc.quote_asset}`;
-    }
-    if (msg.bot_state) {
-      document.getElementById('botSettings').textContent = JSON.stringify(msg.bot_state, null, 2);
-    }
+    if (msg.type === 'live_price') updateLiveCandle(Number(msg.price), Number(msg.ts));
+    if (msg.type === 'stream_warning') document.getElementById('status').textContent = 'fallback HTTP';
+    if (msg.demo_account) renderAccount(msg.demo_account);
+    if (msg.bot_state) renderSettings(msg.bot_state);
   };
-
-  socket.onclose = () => {
-    document.getElementById('status').textContent = 'соединение закрыто';
-  };
-
-  socket.onerror = () => {
-    document.getElementById('status').textContent = 'ошибка ws';
-  };
+  socket.onclose = () => { document.getElementById('status').textContent = 'соединение закрыто'; };
+  socket.onerror = () => { document.getElementById('status').textContent = 'ошибка ws'; };
 }
 
 window.addEventListener('resize', () => chart.applyOptions({ width: chartEl.clientWidth, height: chartEl.clientHeight }));
-loadMarket();
+bootstrap();
 </script>
 </body>
 </html>
