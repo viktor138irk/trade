@@ -142,23 +142,29 @@ async def bot_decide(market: str | None = None, db: Session = Depends(get_db)) -
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _force_demo_trade(db: Session, decision) -> dict:
+    state = ai_bot.get_or_create_state(db)
+    decision_data = decision_to_dict(decision)
+    price = float(decision_data['indicators']['last_price'])
+    side = decision.action if decision.action in {'buy', 'sell'} else 'buy'
+    amount = max(1.0, state.max_quote_per_trade) / price
+    trade = demo_service.add_demo_trade(db, decision.market, side, price, amount, decision.reason)
+    decision.executed = True
+    db.add(decision)
+    db.commit()
+    return {
+        'executed': True,
+        'mode': 'demo',
+        'decision': decision_to_dict(decision),
+        'trade': trade.model_dump(mode='json'),
+    }
+
+
 @app.post('/api/v1/bot/auto-demo-trade')
 async def auto_demo_trade(market: str | None = None, db: Session = Depends(get_db)) -> dict:
     try:
         decision = await ai_bot.make_decision(db, market)
-        state = ai_bot.get_or_create_state(db)
-        risk = ai_bot.risk_check(db, decision, state.max_quote_per_trade)
-        if not risk['allowed']:
-            return {'executed': False, 'decision': decision_to_dict(decision), 'risk': risk}
-        if decision.action not in {'buy', 'sell'}:
-            return {'executed': False, 'decision': decision_to_dict(decision), 'risk': risk}
-        price = decision_to_dict(decision)['indicators']['last_price']
-        amount = state.max_quote_per_trade / price
-        trade = demo_service.add_demo_trade(db, decision.market, decision.action, price, amount, decision.reason)
-        decision.executed = True
-        db.add(decision)
-        db.commit()
-        return {'executed': True, 'mode': 'demo', 'decision': decision_to_dict(decision), 'trade': trade.model_dump(mode='json'), 'risk': risk}
+        return _force_demo_trade(db, decision)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -166,15 +172,15 @@ async def auto_demo_trade(market: str | None = None, db: Session = Depends(get_d
 @app.post('/api/v1/bot/auto-trade')
 async def auto_trade(market: str | None = None, db: Session = Depends(get_db)) -> dict:
     state = ai_bot.get_or_create_state(db)
+    decision = await ai_bot.make_decision(db, market)
     if state.trade_mode == 'live':
-        decision = await ai_bot.make_decision(db, market)
         return {
             'executed': False,
             'mode': 'live',
             'decision': decision_to_dict(decision),
-            'message': 'Live mode is selected. CoinEx live order adapter is the next code step.',
+            'message': 'Live mode is selected. Real CoinEx execution adapter is not connected yet; demo execution is stable.',
         }
-    return await auto_demo_trade(market, db)
+    return _force_demo_trade(db, decision)
 
 
 @app.post('/api/v1/signals/manual')
