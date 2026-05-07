@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     coinex_api_base: str = 'https://api.coinex.com/v2'
     coinex_ws_spot: str = 'wss://socket.coinex.com/v2/spot'
     default_market: str = 'BTCUSDT'
+    database_url: str = 'sqlite:///./trade.db'
+    redis_url: str = 'redis://localhost:6379/0'
 
     @property
     def live_enabled(self) -> bool:
