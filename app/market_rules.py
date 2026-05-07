@@ -13,27 +13,31 @@ class MarketRuleService:
     def __init__(self, coinex: CoinExClient) -> None:
         self.coinex = coinex
 
-    async def sync(self, db: Session, markets: list[str]) -> dict[str, Any]:
+    async def sync(self, db: Session, markets: list[str] | None = None, quote_asset: str = 'USDT') -> dict[str, Any]:
         payload = await self.coinex.get_market_info()
         rows = payload.get('data') or []
         if isinstance(rows, dict):
             rows = [rows]
-        wanted = {m.upper() for m in markets}
+        wanted = {m.upper() for m in markets or []}
         synced = 0
+        active_markets: list[str] = []
         for row in rows:
             if not isinstance(row, dict):
                 continue
             market = str(row.get('market') or row.get('name') or '').upper()
+            if not market:
+                continue
+            quote = str(row.get('quote_ccy') or row.get('quote_currency') or row.get('quote') or quote_asset).upper()
             if wanted and market not in wanted:
                 continue
-            if not market:
+            if not wanted and quote != quote_asset.upper():
                 continue
             rule = db.query(MarketRule).filter(MarketRule.market == market).first()
             if rule is None:
                 rule = MarketRule(market=market)
                 db.add(rule)
-            rule.base_asset = str(row.get('base_ccy') or row.get('base_currency') or row.get('base') or '').upper()
-            rule.quote_asset = str(row.get('quote_ccy') or row.get('quote_currency') or row.get('quote') or 'USDT').upper()
+            rule.base_asset = str(row.get('base_ccy') or row.get('base_currency') or row.get('base') or market.replace(quote, '')).upper()
+            rule.quote_asset = quote
             rule.min_amount = self._float(row.get('min_amount') or row.get('min_base_amount') or row.get('min_asset_amount'), 0.0)
             rule.min_quote_amount = self._float(row.get('min_quote_amount') or row.get('min_amount_value') or row.get('min_value'), 0.0)
             rule.amount_precision = self._int(row.get('amount_precision') or row.get('base_ccy_precision') or row.get('trading_precision'), 8)
@@ -44,8 +48,15 @@ class MarketRuleService:
             rule.raw_json = json.dumps(row, ensure_ascii=False)
             rule.synced_at = datetime.now(timezone.utc)
             synced += 1
+            if rule.is_trading_enabled:
+                active_markets.append(market)
         db.commit()
-        return {'synced': synced, 'markets': list(wanted)}
+        return {'synced': synced, 'markets': active_markets}
+
+    def active_markets(self, db: Session, quote_asset: str = 'USDT', fallback: list[str] | None = None) -> list[str]:
+        rows = db.query(MarketRule).filter(MarketRule.quote_asset == quote_asset.upper(), MarketRule.is_trading_enabled.is_(True)).order_by(MarketRule.market.asc()).all()
+        markets = [row.market for row in rows]
+        return markets or list(fallback or [])
 
     def get(self, db: Session, market: str) -> MarketRule | None:
         return db.query(MarketRule).filter(MarketRule.market == market.upper()).first()
