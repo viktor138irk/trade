@@ -38,11 +38,7 @@ async def health() -> dict:
         'status': 'ok',
         'app': settings.app_name,
         'env': settings.app_env,
-        'trade_mode': settings.trade_mode,
-        'live_enabled': settings.live_enabled,
-        'coinex_credentials_present': settings.coinex_credentials_present,
         'default_market': settings.default_market,
-        'coinex_ws_spot': settings.coinex_ws_spot,
     }
 
 
@@ -86,10 +82,7 @@ async def market_ticker(market: str | None = None) -> dict:
 async def bot_settings(db: Session = Depends(get_db)) -> dict:
     state = ai_bot.get_or_create_state(db)
     data = ai_bot.state_to_dict(state)
-    data['env_live_enabled'] = settings.live_enabled
-    data['coinex_credentials_present'] = settings.coinex_credentials_present
     data['markets'] = settings.markets
-    data['live_ack_text'] = settings.live_requires_ack_text
     return data
 
 
@@ -120,21 +113,15 @@ async def update_bot_settings(
 
 
 @app.post('/api/v1/bot/live/enable')
-async def enable_live_mode(ack: str, db: Session = Depends(get_db)) -> dict:
-    if ack != settings.live_requires_ack_text:
-        raise HTTPException(status_code=400, detail='wrong acknowledgement text')
-    if not settings.enable_live_trading or settings.trade_mode != 'live':
-        raise HTTPException(status_code=400, detail='set TRADE_MODE=live and ENABLE_LIVE_TRADING=true in .env first')
-    if not settings.coinex_credentials_present:
-        raise HTTPException(status_code=400, detail='CoinEx credentials are missing in environment')
-    state = ai_bot.update_state(db, trade_mode='live', live_acknowledged=True, emergency_stop=False)
-    return {'live_ready': True, 'settings': ai_bot.state_to_dict(state)}
+async def enable_live_mode(db: Session = Depends(get_db)) -> dict:
+    state = ai_bot.update_state(db, trade_mode='live', emergency_stop=False)
+    return {'trade_mode': 'live', 'settings': ai_bot.state_to_dict(state)}
 
 
 @app.post('/api/v1/bot/live/disable')
 async def disable_live_mode(db: Session = Depends(get_db)) -> dict:
-    state = ai_bot.update_state(db, trade_mode='demo', live_acknowledged=False, emergency_stop=True)
-    return {'live_ready': False, 'settings': ai_bot.state_to_dict(state)}
+    state = ai_bot.update_state(db, trade_mode='demo')
+    return {'trade_mode': 'demo', 'settings': ai_bot.state_to_dict(state)}
 
 
 @app.get('/api/v1/bot/analyze')
@@ -165,18 +152,29 @@ async def auto_demo_trade(market: str | None = None, db: Session = Depends(get_d
             return {'executed': False, 'decision': decision_to_dict(decision), 'risk': risk}
         if decision.action not in {'buy', 'sell'}:
             return {'executed': False, 'decision': decision_to_dict(decision), 'risk': risk}
-        ticker = await coinex.get_ticker(decision.market)
-        price = ai_bot.coinex_live_price_from_ticker(ticker) if hasattr(ai_bot, 'coinex_live_price_from_ticker') else None
-        if price is None:
-            price = decision_to_dict(decision)['indicators']['last_price']
+        price = decision_to_dict(decision)['indicators']['last_price']
         amount = state.max_quote_per_trade / price
         trade = demo_service.add_demo_trade(db, decision.market, decision.action, price, amount, decision.reason)
         decision.executed = True
         db.add(decision)
         db.commit()
-        return {'executed': True, 'decision': decision_to_dict(decision), 'trade': trade.model_dump(mode='json'), 'risk': risk}
+        return {'executed': True, 'mode': 'demo', 'decision': decision_to_dict(decision), 'trade': trade.model_dump(mode='json'), 'risk': risk}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post('/api/v1/bot/auto-trade')
+async def auto_trade(market: str | None = None, db: Session = Depends(get_db)) -> dict:
+    state = ai_bot.get_or_create_state(db)
+    if state.trade_mode == 'live':
+        decision = await ai_bot.make_decision(db, market)
+        return {
+            'executed': False,
+            'mode': 'live',
+            'decision': decision_to_dict(decision),
+            'message': 'Live mode is selected. CoinEx live order adapter is the next code step.',
+        }
+    return await auto_demo_trade(market, db)
 
 
 @app.post('/api/v1/signals/manual')
