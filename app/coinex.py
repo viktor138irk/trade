@@ -12,6 +12,19 @@ class CoinExClient:
     def __init__(self, api_base: str) -> None:
         self.api_base = api_base.rstrip('/')
 
+    async def get_market_list(self) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f'{self.api_base}/spot/market')
+            response.raise_for_status()
+            return response.json()
+
+    async def get_market_info(self, market: str | None = None) -> dict[str, Any]:
+        params = {'market': market.upper()} if market else None
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f'{self.api_base}/spot/market', params=params)
+            response.raise_for_status()
+            return response.json()
+
     async def get_kline(self, market: str, period: str = '1min', limit: int = 100) -> dict[str, Any]:
         params = {
             'market': market.upper(),
@@ -29,6 +42,18 @@ class CoinExClient:
             response = await client.get(f'{self.api_base}/spot/ticker', params=params)
             response.raise_for_status()
             return response.json()
+
+    def extract_price_from_ticker(self, ticker: dict[str, Any]) -> float | None:
+        data = ticker.get('data')
+        if isinstance(data, list) and data:
+            data = data[0]
+        if not isinstance(data, dict):
+            return None
+        price_raw = data.get('last') or data.get('close') or data.get('last_price')
+        try:
+            return float(price_raw)
+        except (TypeError, ValueError):
+            return None
 
 
 class CoinExLiveStream:
@@ -72,7 +97,7 @@ class CoinExLiveStream:
     async def _trades_from_http_fallback(self, market: str) -> AsyncIterator[dict[str, Any]]:
         while True:
             ticker = await self.rest_client.get_ticker(market)
-            price = self._extract_price_from_ticker(ticker)
+            price = self.rest_client.extract_price_from_ticker(ticker)
             if price is not None:
                 yield {
                     'type': 'live_price',
@@ -120,15 +145,3 @@ class CoinExLiveStream:
             'ts': int(time.time() * 1000),
             'raw': message,
         }
-
-    def _extract_price_from_ticker(self, ticker: dict[str, Any]) -> float | None:
-        data = ticker.get('data')
-        if isinstance(data, list) and data:
-            data = data[0]
-        if not isinstance(data, dict):
-            return None
-        price_raw = data.get('last') or data.get('close') or data.get('last_price')
-        try:
-            return float(price_raw)
-        except (TypeError, ValueError):
-            return None
