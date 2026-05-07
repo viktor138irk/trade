@@ -7,3 +7,4 @@ SQLAlchemy==2.0.36
 psycopg[binary]==3.2.3
 redis==5.2.1
 websockets==14.1
+ccxt==4.4.48
