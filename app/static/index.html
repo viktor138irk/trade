@@ -7,16 +7,17 @@
   <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
   <style>
     body { margin: 0; font-family: Arial, sans-serif; background: #0b1020; color: #e7ecff; }
-    header { padding: 16px 20px; display: flex; gap: 12px; align-items: center; border-bottom: 1px solid #1e2947; }
+    header { padding: 16px 20px; display: flex; gap: 12px; align-items: center; border-bottom: 1px solid #1e2947; flex-wrap: wrap; }
     input, button { padding: 10px 12px; border-radius: 8px; border: 1px solid #344266; background: #111936; color: #e7ecff; }
     button { cursor: pointer; }
-    main { display: grid; grid-template-columns: 1fr 320px; gap: 16px; padding: 16px; }
-    #chart { height: 560px; background: #0f1730; border-radius: 14px; overflow: hidden; }
+    main { display: grid; grid-template-columns: 1fr 340px; gap: 16px; padding: 16px; }
+    #chart { height: 620px; background: #0f1730; border-radius: 14px; overflow: hidden; }
     .panel { background: #0f1730; border: 1px solid #1e2947; border-radius: 14px; padding: 16px; }
-    .metric { margin-bottom: 12px; }
+    .metric { margin-bottom: 14px; }
     .label { color: #8fa0d0; font-size: 12px; }
     .value { font-size: 20px; margin-top: 4px; }
-    pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #b8c4ef; }
+    .pill { padding: 6px 10px; border-radius: 999px; background: #162042; color: #9fb2ff; border: 1px solid #2b3a68; }
+    pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #b8c4ef; max-height: 260px; overflow: auto; }
     @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -25,11 +26,16 @@
     <strong>Trade Autopilot</strong>
     <input id="market" value="BTCUSDT" />
     <button onclick="loadMarket()">Загрузить</button>
-    <span id="status">demo mode</span>
+    <span class="pill" id="status">подключение...</span>
+    <span class="pill" id="source">source: —</span>
   </header>
   <main>
     <section id="chart"></section>
     <aside class="panel">
+      <div class="metric">
+        <div class="label">Live цена</div>
+        <div class="value" id="livePrice">—</div>
+      </div>
       <div class="metric">
         <div class="label">Демо баланс</div>
         <div class="value" id="balance">—</div>
@@ -39,7 +45,7 @@
         <div class="value" id="equity">—</div>
       </div>
       <div class="metric">
-        <div class="label">Последний тикер</div>
+        <div class="label">Последнее событие</div>
         <pre id="ticker">—</pre>
       </div>
     </aside>
@@ -48,26 +54,48 @@
 <script>
 const chartEl = document.getElementById('chart');
 const chart = LightweightCharts.createChart(chartEl, {
+  width: chartEl.clientWidth,
+  height: chartEl.clientHeight,
   layout: { background: { color: '#0f1730' }, textColor: '#d7defa' },
   grid: { vertLines: { color: '#1b2748' }, horzLines: { color: '#1b2748' } },
   timeScale: { timeVisible: true, secondsVisible: false },
 });
 const candleSeries = chart.addCandlestickSeries();
 let socket;
+let currentCandle = null;
 
 function normalizeKline(raw) {
   const rows = raw.data || [];
-  return rows.map(row => ({
+  const candles = rows.map(row => ({
     time: Math.floor(Number(row.created_at || row[0]) / 1000),
     open: Number(row.open || row[1]),
     high: Number(row.high || row[3]),
     low: Number(row.low || row[4]),
     close: Number(row.close || row[2]),
   })).filter(x => Number.isFinite(x.time) && Number.isFinite(x.close));
+
+  candles.sort((a, b) => a.time - b.time);
+  currentCandle = candles.length ? candles[candles.length - 1] : null;
+  return candles;
+}
+
+function updateLiveCandle(price, tsMs) {
+  if (!Number.isFinite(price)) return;
+  const bucket = Math.floor((tsMs || Date.now()) / 60000) * 60;
+  if (!currentCandle || currentCandle.time !== bucket) {
+    currentCandle = { time: bucket, open: price, high: price, low: price, close: price };
+  } else {
+    currentCandle.high = Math.max(currentCandle.high, price);
+    currentCandle.low = Math.min(currentCandle.low, price);
+    currentCandle.close = price;
+  }
+  candleSeries.update(currentCandle);
+  document.getElementById('livePrice').textContent = price.toFixed(8).replace(/0+$/, '').replace(/\.$/, '');
 }
 
 async function loadMarket() {
   const market = document.getElementById('market').value.trim().toUpperCase() || 'BTCUSDT';
+  document.getElementById('status').textContent = 'загрузка истории...';
   const res = await fetch(`/api/v1/market/kline?market=${market}&period=1min&limit=200`);
   const json = await res.json();
   candleSeries.setData(normalizeKline(json));
@@ -87,18 +115,40 @@ function connectWs(market) {
   if (socket) socket.close();
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   socket = new WebSocket(`${proto}://${location.host}/ws/market/${market}`);
+
+  socket.onopen = () => {
+    document.getElementById('status').textContent = `live: ${market}`;
+  };
+
   socket.onmessage = (event) => {
     const msg = JSON.parse(event.data);
-    document.getElementById('ticker').textContent = JSON.stringify(msg.data, null, 2).slice(0, 1200);
+    document.getElementById('ticker').textContent = JSON.stringify(msg, null, 2).slice(0, 1600);
+    document.getElementById('source').textContent = `source: ${msg.source || msg.type}`;
+
+    if (msg.type === 'live_price') {
+      updateLiveCandle(Number(msg.price), Number(msg.ts));
+    }
+    if (msg.type === 'stream_warning') {
+      document.getElementById('status').textContent = 'fallback HTTP';
+    }
+
     const acc = msg.demo_account;
     if (acc) {
       document.getElementById('balance').textContent = `${Number(acc.balance).toFixed(2)} ${acc.quote_asset}`;
       document.getElementById('equity').textContent = `${Number(acc.equity).toFixed(2)} ${acc.quote_asset}`;
     }
   };
+
+  socket.onclose = () => {
+    document.getElementById('status').textContent = 'соединение закрыто';
+  };
+
+  socket.onerror = () => {
+    document.getElementById('status').textContent = 'ошибка ws';
+  };
 }
 
-window.addEventListener('resize', () => chart.applyOptions({ width: chartEl.clientWidth }));
+window.addEventListener('resize', () => chart.applyOptions({ width: chartEl.clientWidth, height: chartEl.clientHeight }));
 loadMarket();
 </script>
 </body>
