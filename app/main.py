@@ -17,7 +17,7 @@ from app.models import DemoTradeRecord, MarketRule
 from app.monitor import SignalMonitor
 
 settings = get_settings()
-coinex = CoinExClient(settings.coinex_api_base)
+coinex = CoinExClient(settings.coinex_api_base, settings.coinex_access_id, settings.coinex_secret_key)
 live_stream = CoinExLiveStream(settings.coinex_ws_spot, coinex)
 demo_service = DemoAccountService(settings.demo_initial_balance, settings.demo_quote_asset)
 ai_bot = AiTradingBot(coinex, settings.markets)
@@ -37,11 +37,18 @@ def ensure_monitor_running() -> None:
         monitor_task = asyncio.create_task(monitor.loop(SessionLocal, interval_seconds=10))
 
 
+def current_markets(db: Session) -> list[str]:
+    return market_rules.active_markets(db, fallback=ai_bot.markets or settings.markets)
+
+
 @app.on_event('startup')
 async def on_startup() -> None:
     init_db()
     with SessionLocal() as db:
         legacy_bot.ensure_defaults(db)
+        active = current_markets(db)
+        if active:
+            ai_bot.markets = active
         state = ai_bot.get_or_create_state(db)
         if state.enabled:
             ensure_monitor_running()
@@ -62,12 +69,26 @@ async def app_bootstrap(_: str = Depends(require_auth), db: Session = Depends(ge
     state = ai_bot.get_or_create_state(db)
     account = demo_service.snapshot(db)
     legacy_bot.ensure_defaults(db)
-    return {'app': settings.app_name, 'default_market': settings.default_market, 'markets': settings.markets, 'bot': ai_bot.state_to_dict(state), 'account': account.model_dump(mode='json'), 'legacy': legacy_bot.dashboard(db), 'monitor': monitor.status()}
+    markets = current_markets(db)
+    return {'app': settings.app_name, 'default_market': settings.default_market, 'markets': markets, 'bot': ai_bot.state_to_dict(state), 'account': account.model_dump(mode='json'), 'legacy': legacy_bot.dashboard(db), 'monitor': monitor.status()}
 
 
 @app.get('/api/v1/demo/account')
 async def demo_account(_: str = Depends(require_auth), db: Session = Depends(get_db)) -> dict:
     return demo_service.snapshot(db).model_dump(mode='json')
+
+
+@app.get('/api/v1/live/account')
+async def live_account(_: str = Depends(require_auth), db: Session = Depends(get_db)) -> dict:
+    return {
+        'available': bool(settings.coinex_access_id and settings.coinex_secret_key),
+        'balance': None,
+        'equity': None,
+        'realized_pnl': None,
+        'unrealized_pnl': None,
+        'total_pnl': None,
+        'message': 'Live balance requires signed CoinEx balance adapter. UI switches to this tile in LIVE mode; adapter is pending because direct signed order/balance code was blocked by the repository tool.',
+    }
 
 
 @app.post('/api/v1/demo/reset')
@@ -108,10 +129,13 @@ async def market_ticker(market: str | None = None, _: str = Depends(require_auth
 
 @app.post('/api/v1/market/rules/sync')
 async def sync_market_rules(_: str = Depends(require_auth), db: Session = Depends(get_db)) -> dict:
-    result = await market_rules.sync(db, settings.markets)
+    result = await market_rules.sync(db, None)
+    active = market_rules.active_markets(db, fallback=settings.markets)
+    if active:
+        ai_bot.markets = active
     monitor.rules_synced = True
-    monitor.write_log(db, 'success', 'manual_coinex_rules_synced', f'Вручную синхронизированы лимиты и комиссии CoinEx: {result["synced"]} рынков.')
-    return result
+    monitor.write_log(db, 'success', 'manual_coinex_rules_synced', f'Вручную синхронизированы лимиты и комиссии CoinEx: {result["synced"]} рынков. Активных рынков: {len(active)}.')
+    return {'synced': result['synced'], 'active_markets': len(active), 'markets': active[:200]}
 
 
 @app.get('/api/v1/market/rules')
@@ -124,7 +148,7 @@ async def list_market_rules(_: str = Depends(require_auth), db: Session = Depend
 async def bot_settings(_: str = Depends(require_auth), db: Session = Depends(get_db)) -> dict:
     state = ai_bot.get_or_create_state(db)
     data = ai_bot.state_to_dict(state)
-    data['markets'] = settings.markets
+    data['markets'] = current_markets(db)
     return data
 
 
@@ -237,8 +261,8 @@ async def auto_trade(market: str | None = None, _: str = Depends(require_auth), 
     state = ai_bot.get_or_create_state(db)
     decision = await ai_bot.make_decision(db, market)
     if state.trade_mode == 'live':
-        monitor.write_log(db, 'warning', 'live_order_pending', f'Live-режим включен. Сигнал {decision.market} найден, перед реальным закрытием нужно сверить доступный баланс/позицию по API CoinEx.', market=decision.market, action=decision.action, score=decision.score)
-        return {'executed': False, 'mode': 'live', 'decision': decision_to_dict(decision), 'message': 'Live mode is selected. CoinEx execution adapter must verify exchange balance before order.'}
+        monitor.write_log(db, 'warning', 'live_order_ready_blocked', f'Live-сигнал {decision.market} найден. Репозиторный инструмент блокирует добавление signed/live-order adapter; логика готова к подключению: баланс, лимиты, весь объем на закрытие.', market=decision.market, action=decision.action, score=decision.score)
+        return {'executed': False, 'mode': 'live', 'decision': decision_to_dict(decision), 'message': 'Live signal is ready, but live execution adapter is not committed because signed order code was blocked by the repository tool.'}
     return _force_demo_trade(db, decision)
 
 
