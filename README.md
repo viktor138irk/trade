@@ -28,6 +28,13 @@ Dashboard:
 http://localhost:8000/
 ```
 
+Live-график:
+
+- История свечей грузится через CoinEx HTTP kline.
+- Текущая свеча обновляется через backend WebSocket `/ws/market/{market}`.
+- Backend подключается к CoinEx spot WebSocket и подписывается на сделки.
+- Если WebSocket CoinEx недоступен, включается HTTP fallback.
+
 ## Сервер
 
 Основной сервер проекта: `194.67.116.46`
@@ -64,16 +71,26 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+## Обновление на сервере
+
+```bash
+cd /opt/trade
+git pull
+docker compose down
+docker compose up -d --build
+```
+
 ## Структура
 
 ```text
 app/
-  api/          HTTP routes
-  core/         settings
-  exchanges/   CoinEx market-data client
-  services/    demo account and business logic
-  static/      live dashboard
-  main.py      FastAPI entrypoint
+  coinex.py      CoinEx HTTP client and live WebSocket stream
+  core.py        settings
+  db.py          database setup
+  demo_account.py demo account service
+  models.py      SQLAlchemy models
+  static/        live dashboard
+  main.py        FastAPI entrypoint
 ```
 
 ## Важно
