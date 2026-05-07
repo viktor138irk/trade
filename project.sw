@@ -16,7 +16,7 @@ Current implementation status:
 - Legacy trading bot service layer in app/legacy_bot.py
 - Full admin dashboard in app/static/index.html
 - Dashboard renders live 1-minute candles from /ws/market/{market}
-- Dashboard has simple Demo счет / Live счет mode switch
+- Dashboard has a permanent single Demo / Live toggle in the top panel and in Limits
 - Dockerfile, docker-compose.yml, requirements.txt, .env.example and .gitignore added
 - docker-compose includes api, postgres and redis services
 - README no longer exposes the server IP
@@ -35,7 +35,7 @@ Transferred from the adjacent 'торговый бот' chat context:
 
 Mode names:
 - demo: virtual demo account, simulated balance, simulated orders, PnL, trade history, reset balance
-- live: selected through bot settings with trade_mode=live
+- live: selected with the permanent Demo / Live toggle or trade_mode=live
 
 Current bot endpoints:
 - GET /api/v1/app/bootstrap
@@ -47,6 +47,9 @@ Current bot endpoints:
 - POST /api/v1/bot/decide?market=BTCUSDT
 - POST /api/v1/bot/auto-trade?market=BTCUSDT
 - POST /api/v1/bot/auto-demo-trade?market=BTCUSDT
+- GET /api/v1/monitor/status
+- POST /api/v1/monitor/start
+- POST /api/v1/monitor/stop
 - POST /api/v1/signals/manual
 - GET /api/v1/signals/recent
 - GET /api/v1/decisions/recent
@@ -66,12 +69,13 @@ Current bot endpoints:
 
 Important user preference:
 - Keep settings simple.
-- User wants a plain Demo / Live account switch.
+- Never remove the permanent Demo / Live toggle.
+- User wants Live mode enabled with one clear switch, not multiple confirmations.
 - Do not show JSON on the main dashboard.
 - Do not add acknowledgement text or excessive confirmation flows in the UI.
 
 Current limitation:
-- Live mode switch is implemented in settings.
+- Live mode switch is implemented in settings and UI.
 - Low-level real CoinEx order placement still needs final adapter implementation.
 - Previous attempt to add signed CoinEx order code was blocked by the GitHub tool safety layer.
 
