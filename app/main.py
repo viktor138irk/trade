@@ -42,6 +42,19 @@ async def health() -> dict:
     }
 
 
+@app.get('/api/v1/app/bootstrap')
+async def app_bootstrap(db: Session = Depends(get_db)) -> dict:
+    state = ai_bot.get_or_create_state(db)
+    account = demo_service.snapshot(db)
+    return {
+        'app': settings.app_name,
+        'default_market': settings.default_market,
+        'markets': settings.markets,
+        'bot': ai_bot.state_to_dict(state),
+        'account': account.model_dump(mode='json'),
+    }
+
+
 @app.get('/api/v1/demo/account')
 async def demo_account(db: Session = Depends(get_db)) -> dict:
     return demo_service.snapshot(db).model_dump(mode='json')
@@ -128,6 +141,15 @@ async def disable_live_mode(db: Session = Depends(get_db)) -> dict:
 async def analyze_market(market: str | None = None, db: Session = Depends(get_db)) -> dict:
     try:
         pack = await ai_bot.analyze_market(db, market or settings.default_market)
+        return pack.as_dict()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get('/api/v1/bot/best-market')
+async def best_market(db: Session = Depends(get_db)) -> dict:
+    try:
+        pack = await ai_bot.choose_best_market(db)
         return pack.as_dict()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
