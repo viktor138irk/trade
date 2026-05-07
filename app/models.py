@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import DateTime, Float, Integer, String
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -31,6 +31,92 @@ class DemoTradeRecord(Base):
     amount: Mapped[float] = mapped_column(Float, nullable=False)
     quote_amount: Mapped[float] = mapped_column(Float, nullable=False)
     reason: Mapped[str] = mapped_column(String(512), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class DemoPosition(Base):
+    __tablename__ = 'demo_positions'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    market: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    amount: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    avg_entry_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    realized_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    is_open: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class BotState(Base):
+    __tablename__ = 'bot_state'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    trade_mode: Mapped[str] = mapped_column(String(16), nullable=False, default='demo')
+    trade_style_mode: Mapped[str] = mapped_column(String(32), nullable=False, default='balanced')
+    min_signal_score: Mapped[float] = mapped_column(Float, nullable=False, default=65.0)
+    max_open_positions: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    max_quote_per_trade: Mapped[float] = mapped_column(Float, nullable=False, default=100.0)
+    emergency_stop: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    live_acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class AiDecision(Base):
+    __tablename__ = 'ai_decisions'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    market: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    indicators_json: Mapped[str] = mapped_column(Text, nullable=False, default='{}')
+    executed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class NewsSignal(Base):
+    __tablename__ = 'news_signals'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String(128), nullable=False, default='manual')
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    market: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    sentiment: Mapped[str] = mapped_column(String(16), nullable=False, default='neutral')
+    score: Mapped[float] = mapped_column(Float, nullable=False, default=50.0)
+    url: Mapped[str] = mapped_column(String(1024), nullable=False, default='')
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class SystemStatus(Base):
+    __tablename__ = 'system_status'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    component: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False, default='')
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
