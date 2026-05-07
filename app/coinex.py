@@ -9,8 +9,10 @@ import websockets
 
 
 class CoinExClient:
-    def __init__(self, api_base: str) -> None:
+    def __init__(self, api_base: str, access_id: str = '', secret_key: str = '') -> None:
         self.api_base = api_base.rstrip('/')
+        self.access_id = access_id
+        self.secret_key = secret_key
 
     async def get_market_list(self) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -26,18 +28,14 @@ class CoinExClient:
             return response.json()
 
     async def get_kline(self, market: str, period: str = '1min', limit: int = 100) -> dict[str, Any]:
-        params = {
-            'market': market.upper(),
-            'period': period,
-            'limit': max(1, min(limit, 1000)),
-        }
+        params = {'market': market.upper(), 'period': period, 'limit': max(1, min(limit, 1000))}
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(f'{self.api_base}/spot/kline', params=params)
             response.raise_for_status()
             return response.json()
 
-    async def get_ticker(self, market: str) -> dict[str, Any]:
-        params = {'market': market.upper()}
+    async def get_ticker(self, market: str | None = None) -> dict[str, Any]:
+        params = {'market': market.upper()} if market else None
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(f'{self.api_base}/spot/ticker', params=params)
             response.raise_for_status()
@@ -55,6 +53,12 @@ class CoinExClient:
         except (TypeError, ValueError):
             return None
 
+    def extract_tickers(self, ticker: dict[str, Any]) -> list[dict[str, Any]]:
+        data = ticker.get('data') or []
+        if isinstance(data, dict):
+            data = [data]
+        return [item for item in data if isinstance(item, dict) and item.get('market')]
+
 
 class CoinExLiveStream:
     def __init__(self, ws_url: str, rest_client: CoinExClient) -> None:
@@ -67,22 +71,12 @@ class CoinExLiveStream:
             async for event in self._trades_from_ws(market):
                 yield event
         except Exception as exc:  # noqa: BLE001 - dashboard must keep breathing
-            yield {
-                'type': 'stream_warning',
-                'market': market,
-                'message': f'CoinEx WebSocket unavailable, using HTTP fallback: {exc}',
-            }
+            yield {'type': 'stream_warning', 'market': market, 'message': f'CoinEx WebSocket unavailable, using HTTP fallback: {exc}'}
             async for event in self._trades_from_http_fallback(market):
                 yield event
 
     async def _trades_from_ws(self, market: str) -> AsyncIterator[dict[str, Any]]:
-        subscribe_message = {
-            'id': int(time.time()),
-            'method': 'deals.subscribe',
-            'params': {
-                'market_list': [market],
-            },
-        }
+        subscribe_message = {'id': int(time.time()), 'method': 'deals.subscribe', 'params': {'market_list': [market]}}
         async with websockets.connect(self.ws_url, ping_interval=20, ping_timeout=20) as websocket:
             await websocket.send(json.dumps(subscribe_message))
             async for raw_message in websocket:
@@ -99,21 +93,13 @@ class CoinExLiveStream:
             ticker = await self.rest_client.get_ticker(market)
             price = self.rest_client.extract_price_from_ticker(ticker)
             if price is not None:
-                yield {
-                    'type': 'live_price',
-                    'source': 'coinex_http_fallback',
-                    'market': market,
-                    'price': price,
-                    'ts': int(time.time() * 1000),
-                    'raw': ticker,
-                }
+                yield {'type': 'live_price', 'source': 'coinex_http_fallback', 'market': market, 'price': price, 'ts': int(time.time() * 1000), 'raw': ticker}
             await asyncio.sleep(2)
 
     def _normalize_deals_message(self, market: str, message: dict[str, Any]) -> dict[str, Any] | None:
         params = message.get('params')
         if not params:
             return None
-
         deals: list[Any] = []
         if isinstance(params, dict):
             if params.get('market') and params.get('market') != market:
@@ -123,7 +109,6 @@ class CoinExLiveStream:
             for item in params:
                 if isinstance(item, dict):
                     deals.extend(item.get('deal_list') or item.get('deals') or [item])
-
         prices: list[float] = []
         for deal in deals:
             if not isinstance(deal, dict):
@@ -133,15 +118,6 @@ class CoinExLiveStream:
                 prices.append(float(price_raw))
             except (TypeError, ValueError):
                 continue
-
         if not prices:
             return None
-
-        return {
-            'type': 'live_price',
-            'source': 'coinex_ws',
-            'market': market,
-            'price': prices[-1],
-            'ts': int(time.time() * 1000),
-            'raw': message,
-        }
+        return {'type': 'live_price', 'source': 'coinex_ws', 'market': market, 'price': prices[-1], 'ts': int(time.time() * 1000), 'raw': message}
