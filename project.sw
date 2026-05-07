@@ -12,6 +12,8 @@ Current implementation status:
 - SQLAlchemy models in app/models.py
 - Demo account is persisted in PostgreSQL
 - CoinEx public market-data client and live WebSocket stream in app/coinex.py
+- CoinEx market info sync methods added to app/coinex.py
+- CoinEx market rules service added in app/market_rules.py
 - Monolithic AI bot logic in app/ai_bot.py
 - Legacy trading bot service layer in app/legacy_bot.py
 - Full admin dashboard in app/static/index.html
@@ -33,6 +35,17 @@ Transferred from the adjacent 'торговый бот' chat context:
 - Android-friendly status API
 - Chart history model and snapshot endpoint support
 
+Trading rules now implemented:
+- Bot syncs CoinEx public market rules: min amount, min quote amount, amount precision, price precision, maker/taker fee placeholders.
+- Market rules are stored in table market_rules.
+- Endpoint POST /api/v1/market/rules/sync manually syncs rules.
+- Endpoint GET /api/v1/market/rules lists stored rules.
+- Monitor automatically attempts CoinEx rules sync on first run.
+- One market = one open trade: duplicate open position on same market is blocked.
+- Bot rotates markets and skips markets with open positions, so it does not get stuck on one market.
+- For sell/close in demo, bot closes the full available market position amount from DB.
+- For future live mode, close flow must verify available asset balance by CoinEx API before sending order.
+
 Mode names:
 - demo: virtual demo account, simulated balance, simulated orders, PnL, trade history, reset balance
 - live: selected with the permanent Demo / Live toggle or trade_mode=live
@@ -47,9 +60,13 @@ Current bot endpoints:
 - POST /api/v1/bot/decide?market=BTCUSDT
 - POST /api/v1/bot/auto-trade?market=BTCUSDT
 - POST /api/v1/bot/auto-demo-trade?market=BTCUSDT
+- POST /api/v1/demo/close-full
+- POST /api/v1/market/rules/sync
+- GET /api/v1/market/rules
 - GET /api/v1/monitor/status
 - POST /api/v1/monitor/start
 - POST /api/v1/monitor/stop
+- GET /api/v1/monitor/logs
 - POST /api/v1/signals/manual
 - GET /api/v1/signals/recent
 - GET /api/v1/decisions/recent
@@ -73,6 +90,9 @@ Important user preference:
 - User wants Live mode enabled with one clear switch, not multiple confirmations.
 - Do not show JSON on the main dashboard.
 - Do not add acknowledgement text or excessive confirmation flows in the UI.
+- One market must have only one open trade at a time.
+- Bot must not get stuck on one market.
+- Closing must use the full available amount for that market; in live mode verify through CoinEx API first.
 
 Current limitation:
 - Live mode switch is implemented in settings and UI.
@@ -80,8 +100,8 @@ Current limitation:
 - Previous attempt to add signed CoinEx order code was blocked by the GitHub tool safety layer.
 
 Next steps:
-1. Implement final CoinEx live order adapter in a way accepted by the tool.
-2. Add proper demo position accounting for open/closed trade tables.
+1. Implement final CoinEx live order adapter with balance verification before sell/close.
+2. Surface market rules sync status in dashboard UI.
 3. Add RSS/news collector.
 4. Add signal markers and equity curve.
 5. Add tests and CI.
