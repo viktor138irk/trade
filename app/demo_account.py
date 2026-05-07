@@ -64,7 +64,7 @@ class DemoAccountService:
         db.refresh(state)
         return self.snapshot(db)
 
-    def add_demo_trade(self, db: Session, market: str, side: str, price: float, amount: float, reason: str) -> DemoTrade:
+    def add_demo_trade(self, db: Session, market: str, side: str, price: float, amount: float, reason: str, allow_position_add: bool = False) -> DemoTrade:
         if price <= 0 or amount <= 0:
             raise ValueError('price and amount must be positive')
 
@@ -75,9 +75,11 @@ class DemoAccountService:
             raise ValueError('side must be buy or sell')
 
         state = self._get_or_create_state(db)
-        position = db.query(DemoPosition).filter(DemoPosition.market == market, DemoPosition.is_open.is_(True)).first()
+        position = self.get_open_position(db, market)
 
         if side_normalized == 'buy':
+            if position is not None and not allow_position_add:
+                raise ValueError(f'по {market} уже есть открытая сделка: правило один market = одна сделка')
             if quote_amount > state.balance:
                 raise ValueError('not enough demo balance')
             state.balance -= quote_amount
@@ -103,29 +105,46 @@ class DemoAccountService:
                 position.take_profit = position.avg_entry_price * 1.02
                 position.stop_loss = position.avg_entry_price * 0.99
         else:
-            state.balance += quote_amount
             if position is not None and position.amount > 0:
                 sell_amount = min(amount, position.amount)
+                quote_amount = price * sell_amount
+                state.balance += quote_amount
                 realized = (price - position.avg_entry_price) * sell_amount
                 position.amount -= sell_amount
                 position.current_price = price
                 position.realized_pnl += realized
                 state.realized_pnl += realized
+                amount = sell_amount
                 if position.amount <= 1e-12:
                     position.amount = 0.0
                     position.is_open = False
                     position.closed_at = datetime.now(timezone.utc)
             else:
-                state.realized_pnl += quote_amount
+                raise ValueError(f'нет открытой позиции по {market} для закрытия')
 
         self.reprice_positions(db, {market: price})
         state.equity = state.balance + self.open_positions_value(db)
-        trade = DemoTradeRecord(market=market, side=side_normalized, price=price, amount=amount, quote_amount=quote_amount, reason=reason)
+        trade = DemoTradeRecord(market=market, side=side_normalized, price=price, amount=amount, quote_amount=price * amount, reason=reason)
         db.add(state)
         db.add(trade)
         db.commit()
         db.refresh(trade)
         return DemoTrade.model_validate(trade)
+
+    def close_full_market(self, db: Session, market: str, price: float, reason: str) -> DemoTrade:
+        position = self.get_open_position(db, market)
+        if position is None or position.amount <= 0:
+            raise ValueError(f'нет открытой позиции по {market} для полного закрытия')
+        # In demo mode the database position is the balance source of truth.
+        # In live mode the execution adapter must replace this with exchange balance verification.
+        verified_amount = position.amount
+        return self.add_demo_trade(db, market, 'sell', price, verified_amount, f'{reason}; закрытие всей доступной суммы {verified_amount:g}')
+
+    def get_open_position(self, db: Session, market: str) -> DemoPosition | None:
+        return db.query(DemoPosition).filter(DemoPosition.market == market.upper(), DemoPosition.is_open.is_(True)).first()
+
+    def has_open_position(self, db: Session, market: str) -> bool:
+        return self.get_open_position(db, market) is not None
 
     def reprice_positions(self, db: Session, prices: dict[str, float]) -> None:
         for market, price in prices.items():
